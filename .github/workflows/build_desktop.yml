@@ -1,0 +1,65 @@
+name: Build Electrowave Desktop
+
+# This tells GitHub to run the build automatically when you push code,
+# and also gives you a button to trigger it manually on the website.
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # --- LINUX BUILD JOB ---
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install Flutter packages
+        run: flutter pub get
+
+      - name: Build Linux Release
+        run: flutter build linux --release
+
+      - name: Upload Linux App
+        uses: actions/upload-artifact@v4
+        with:
+          name: electrowave-linux
+          path: build/linux/x64/release/bundle/
+
+  # --- WINDOWS BUILD JOB ---
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install Flutter packages
+        run: flutter pub get
+
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Upload Windows App
+        uses: actions/upload-artifact@v4
+        with:
+          name: electrowave-windows
+          path: build\windows\x64\runner\Release\
