@@ -45,7 +45,8 @@ class BackupService {
     }
   }
 
-  Future<bool> importDatabase() async {
+  /// Imports a database from a user-selected file
+  Future<bool> importDatabase(db.AppDatabase database) async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         dialogTitle: 'Select Library Backup',
@@ -53,11 +54,17 @@ class BackupService {
         allowedExtensions: ['sqlite', 'db'],
       );
 
+      // If they hit cancel, we return false BEFORE closing the database
       if (result == null || result.files.single.path == null) return false;
 
       final sourceFile = File(result.files.single.path!);
       final dbFile = await _getDbFile();
 
+      // --- THE WINDOWS FIX ---
+      // Close the active Drift connection to release the Windows file lock
+      await database.close();
+
+      // Overwrite the current database with the backup
       await sourceFile.copy(dbFile.path);
       return true;
     } catch (e) {

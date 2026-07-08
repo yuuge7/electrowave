@@ -26,7 +26,9 @@ class SettingsView extends ConsumerWidget {
     await ref.read(playerProvider).stop();
     ref.read(currentTrackProvider.notifier).setTrack(null);
 
-    final success = await ref.read(backupServiceProvider).importDatabase();
+    // Grab the database instance and pass it to the import service
+    final database = ref.read(databaseProvider);
+    final success = await ref.read(backupServiceProvider).importDatabase(database);
     
     if (context.mounted && success) {
       showDialog(
