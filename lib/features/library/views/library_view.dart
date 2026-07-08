@@ -2,6 +2,8 @@ import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:drift/drift.dart' as drift; // Added for soft delete Value()
+
 import '../providers/library_provider.dart';
 import '../../player/services/metadata_scanner.dart';
 import '../../player/providers/player_provider.dart';
@@ -67,8 +69,12 @@ class LibraryView extends ConsumerWidget {
               // 1. Remove the track from any playlists it belongs to
               await (database.delete(database.playlistTracks)..where((t) => t.trackId.equals(track.id))).go();
               
-              // 2. Remove the track from the master library
-              await (database.delete(database.tracks)..where((t) => t.id.equals(track.id))).go();
+              // 2. SOFT DELETE: Hide the track without destroying its stats
+              await (database.update(database.tracks)..where((t) => t.id.equals(track.id))).write(
+                const db.TracksCompanion(
+                  isDeleted: drift.Value(true),
+                ),
+              );
               
               if (context.mounted) Navigator.pop(context);
             },
@@ -88,13 +94,47 @@ class LibraryView extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
+      
+      // UPDATED FAB: Now pops a bottom sheet to choose between Folder or Files
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.greenAccent,
-        onPressed: () async {
-          await MetadataScanner(database).scanFolder();
+        onPressed: () {
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: const Color(0xFF181818),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            builder: (context) => SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.create_new_folder, color: Colors.greenAccent),
+                    title: const Text('Scan Entire Folder', style: TextStyle(color: Colors.white)),
+                    subtitle: const Text('Finds all music in a directory', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await MetadataScanner(database).scanDirectory();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.queue_music, color: Colors.greenAccent),
+                    title: const Text('Add Specific Files', style: TextStyle(color: Colors.white)),
+                    subtitle: const Text('Select individual tracks to add', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await MetadataScanner(database).scanSpecificFiles();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
         },
         child: const Icon(Icons.add, color: Colors.black),
       ),
+      
       body: Column(
         children: [
           Padding(
