@@ -45,17 +45,17 @@ class BackupService {
     }
   }
 
-  // importDatabase Renamed to stageImport for clarity
+  // importDatabase renamed to stageImport for clarity
   Future<bool> stageImport(String backupFilePath) async {
     try {
       final sourceFile = File(backupFilePath);
       final dbFile = await _getDbFile();
       
-      // Save the backup next to the real database as a "pending" file
-      // Windows won't block this because Drift doesn't know this file exists yet!
-      final pendingFile = File('${dbFile.parent.path}/pending_import.sqlite');
-      await sourceFile.copy(pendingFile.path);
+      // FIX: Use p.join to handle Windows (\) and Linux (/) slashes automatically
+      final pendingFile = File(p.join(dbFile.parent.path, 'pending_import.sqlite'));
       
+      await sourceFile.copy(pendingFile.path);
+      debugPrint("=== STAGING SAVED TO: ${pendingFile.path} ===");
       return true;
     } catch (e) {
       debugPrint('Stage error: $e');

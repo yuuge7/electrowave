@@ -1,35 +1,41 @@
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:metadata_god/metadata_god.dart';
-
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'core/database/app_database.dart';
 import 'shared/widgets/main_shell.dart';
 
 Future<void> applyPendingDatabaseImport() async {
   try {
-    // Note: Make sure this path exactly matches where _getDbFile() saves your database!
-    // Often it is getApplicationSupportDirectory() or getApplicationDocumentsDirectory()
-    final docDir = await getApplicationDocumentsDirectory(); 
-    final dbFile = File('${docDir.path}/local_player_db.sqlite');
-    final pendingFile = File('${docDir.path}/pending_import.sqlite');
+    final dir = await getApplicationDocumentsDirectory(); // (or SupportDirectory, whichever you are using)
+    
+    // 1. ADD THIS: Target the specific Electrowave subfolder
+    final appDir = Directory(p.join(dir.path, 'Electrowave'));
+    
+    // 2. Point to the files INSIDE that subfolder
+    final dbFile = File(p.join(appDir.path, 'local_player_db.sqlite'));
+    final pendingFile = File(p.join(appDir.path, 'pending_import.sqlite'));
+
+    debugPrint("=== BOOT LOOKING FOR: ${pendingFile.path} ===");
 
     if (await pendingFile.exists()) {
-      // 1. Delete the SQLite temporary files so they don't corrupt the new import
+      debugPrint("Found pending import! Overwriting database...");
+      
       final walFile = File('${dbFile.path}-wal');
       final shmFile = File('${dbFile.path}-shm');
+      
       if (await walFile.exists()) await walFile.delete();
       if (await shmFile.exists()) await shmFile.delete();
 
-      // 2. Overwrite the real db with the pending backup
       await pendingFile.copy(dbFile.path);
-      
-      // 3. Clean up the pending file
       await pendingFile.delete();
+      
       debugPrint("Pending import applied successfully on startup!");
+    } else {
+      debugPrint("No pending import found. Normal boot sequence.");
     }
   } catch (e) {
     debugPrint("Error applying pending import: $e");
