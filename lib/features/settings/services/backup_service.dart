@@ -54,18 +54,34 @@ class BackupService {
         allowedExtensions: ['sqlite', 'db'],
       );
 
-      // If they hit cancel, we return false BEFORE closing the database
+      // If they cancel the picker, abort BEFORE closing the database
       if (result == null || result.files.single.path == null) return false;
 
       final sourceFile = File(result.files.single.path!);
       final dbFile = await _getDbFile();
 
-      // --- THE WINDOWS FIX ---
-      // Close the active Drift connection to release the Windows file lock
+      // 1. Close the database to release the primary Windows lock
       await database.close();
 
-      // Overwrite the current database with the backup
+      // 2. Force a tiny delay. Windows is notoriously slow at fully 
+      // releasing C++ file handles back to the operating system.
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // 3. Nuke the temporary SQLite files. If you overwrite the main .sqlite 
+      // file without deleting these, SQLite will instantly corrupt.
+      final walFile = File('${dbFile.path}-wal');
+      final shmFile = File('${dbFile.path}-shm');
+      
+      if (await walFile.exists()) {
+        try { await walFile.delete(); } catch (_) {}
+      }
+      if (await shmFile.exists()) {
+        try { await shmFile.delete(); } catch (_) {}
+      }
+
+      // 4. Overwrite the database
       await sourceFile.copy(dbFile.path);
+
       return true;
     } catch (e) {
       debugPrint('Import error: $e');

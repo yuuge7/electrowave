@@ -26,36 +26,73 @@ class SettingsView extends ConsumerWidget {
     await ref.read(playerProvider).stop();
     ref.read(currentTrackProvider.notifier).setTrack(null);
 
-    // Grab the database instance and pass it to the import service
+    // 1. Show an un-dismissible loading barrier immediately
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Colors.greenAccent)
+      ),
+    );
+
     final database = ref.read(databaseProvider);
     final success = await ref.read(backupServiceProvider).importDatabase(database);
     
-    if (context.mounted && success) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF181818),
-          title: const Text('Import Successful', style: TextStyle(color: Colors.greenAccent)),
-          content: const Text(
-            'Backup restored!\n\nAre your music files located in the exact same absolute path as before, or did you move them to a new folder/OS?', 
-            style: TextStyle(color: Colors.white70)
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => exit(0), 
-              child: const Text('Same Location (Restart)', style: TextStyle(color: Colors.grey)),
+    // 2. Remove the loading barrier
+    if (context.mounted) {
+      Navigator.pop(context); 
+    }
+
+    // 3. Handle the result
+    if (context.mounted) {
+      if (success) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF181818),
+            title: const Text('Import Successful', style: TextStyle(color: Colors.greenAccent)),
+            content: const Text(
+              'Backup restored!\n\nAre your music files located in the exact same absolute path as before, or did you move them to a new folder/OS?', 
+              style: TextStyle(color: Colors.white70)
             ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context); 
-                _startRelocationFlow(context, ref);
-              },
-              child: const Text('New Location (Relocate)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+            actions: [
+              TextButton(
+                onPressed: () => exit(0), 
+                child: const Text('Same Location (Restart)', style: TextStyle(color: Colors.grey)),
+              ),
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context); 
+                  _startRelocationFlow(context, ref);
+                },
+                child: const Text('New Location (Relocate)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          )
+        );
+      } else {
+        // If the import failed (e.g., file permissions), the DB is still closed. 
+        // We MUST force a restart to prevent the isolate crash you saw.
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF181818),
+            title: const Text('Import Failed', style: TextStyle(color: Colors.redAccent)),
+            content: const Text(
+              'The import could not complete. The database connection was closed during the attempt, so the app must be restarted.', 
+              style: TextStyle(color: Colors.white70)
             ),
-          ],
-        )
-      );
+            actions: [
+              TextButton(
+                onPressed: () => exit(0), 
+                child: const Text('Restart App', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          )
+        );
+      }
     }
   }
 
