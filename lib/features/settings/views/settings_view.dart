@@ -23,23 +23,15 @@ class SettingsView extends ConsumerWidget {
   }
 
   void _handleImport(BuildContext context, WidgetRef ref) async {
-    // 1. Open the File Picker FIRST (No UI blocking)
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Select Library Backup',
       type: FileType.custom,
       allowedExtensions: ['sqlite', 'db'],
     );
 
-    // If they hit cancel, abort before doing anything
     if (result == null || result.files.single.path == null) return;
-    
     final backupPath = result.files.single.path!;
 
-    // 2. Stop the player to free up database locks
-    await ref.read(playerProvider).stop();
-    ref.read(currentTrackProvider.notifier).setTrack(null);
-
-    // 3. NOW show the loading barrier
     if (!context.mounted) return;
     showDialog(
       context: context,
@@ -49,63 +41,32 @@ class SettingsView extends ConsumerWidget {
       ),
     );
 
-    // 4. Run the actual import process
-    final database = ref.read(databaseProvider);
-    final success = await ref.read(backupServiceProvider).importDatabase(database, backupPath);
+    // STAGE the file instead of trying to overwrite the locked database
+    final success = await ref.read(backupServiceProvider).stageImport(backupPath);
     
-    // 5. Safely close the loading barrier using the root navigator
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop(); 
     }
 
-    // 6. Show the result dialog
-    if (context.mounted) {
-      if (success) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF181818),
-            title: const Text('Import Successful', style: TextStyle(color: Colors.greenAccent)),
-            content: const Text(
-              'Backup restored!\n\nAre your music files located in the exact same absolute path as before, or did you move them to a new folder/OS?', 
-              style: TextStyle(color: Colors.white70)
+    if (context.mounted && success) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF181818),
+          title: const Text('Import Ready', style: TextStyle(color: Colors.greenAccent)),
+          content: const Text(
+            'Backup file has been staged successfully!\n\nBecause Windows locks active databases, the app must be restarted to apply the new library.', 
+            style: TextStyle(color: Colors.white70)
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => exit(0), 
+              child: const Text('Close App Now', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => exit(0), 
-                child: const Text('Same Location (Restart)', style: TextStyle(color: Colors.grey)),
-              ),
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(context); 
-                  _startRelocationFlow(context, ref);
-                },
-                child: const Text('New Location (Relocate)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          )
-        );
-      } else {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF181818),
-            title: const Text('Import Failed', style: TextStyle(color: Colors.redAccent)),
-            content: const Text(
-              'The import could not complete. The database connection was closed during the attempt, so the app must be restarted.', 
-              style: TextStyle(color: Colors.white70)
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => exit(0), 
-                child: const Text('Restart App', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          )
-        );
-      }
+          ],
+        )
+      );
     }
   }
 

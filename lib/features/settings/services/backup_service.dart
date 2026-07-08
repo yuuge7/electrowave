@@ -45,33 +45,20 @@ class BackupService {
     }
   }
 
-  /// Imports a database from a user-selected file
-  Future<bool> importDatabase(db.AppDatabase database, String backupFilePath) async {
+  // importDatabase Renamed to stageImport for clarity
+  Future<bool> stageImport(String backupFilePath) async {
     try {
       final sourceFile = File(backupFilePath);
       final dbFile = await _getDbFile();
-
-      // 1. Close the database to release the primary Windows lock
-      await database.close();
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // 2. Nuke the temporary SQLite files
-      final walFile = File('${dbFile.path}-wal');
-      final shmFile = File('${dbFile.path}-shm');
       
-      if (await walFile.exists()) {
-        try { await walFile.delete(); } catch (_) {}
-      }
-      if (await shmFile.exists()) {
-        try { await shmFile.delete(); } catch (_) {}
-      }
-
-      // 3. Overwrite the database
-      await sourceFile.copy(dbFile.path);
-
+      // Save the backup next to the real database as a "pending" file
+      // Windows won't block this because Drift doesn't know this file exists yet!
+      final pendingFile = File('${dbFile.parent.path}/pending_import.sqlite');
+      await sourceFile.copy(pendingFile.path);
+      
       return true;
     } catch (e) {
-      debugPrint('Import error: $e');
+      debugPrint('Stage error: $e');
       return false;
     }
   }
