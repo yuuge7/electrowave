@@ -1,7 +1,5 @@
 name: Build Electrowave Desktop
 
-# This tells GitHub to run the build automatically when you push code,
-# and also gives you a button to trigger it manually on the website.
 on:
   push:
     branches: [ "main" ]
@@ -31,11 +29,105 @@ jobs:
       - name: Build Linux Release
         run: flutter build linux --release
 
-      - name: Upload Linux App
+      - name: Package as Debian Installer (.deb)
+        run: |
+          # Create the native Linux system folder structure
+          mkdir -p deb_pkg/opt/electrowave
+          mkdir -p deb_pkg/usr/share/applications
+          mkdir -p deb_pkg/usr/share/icons/hicolor/512x512/apps
+          mkdir -p deb_pkg/usr/bin
+          mkdir -p deb_pkg/DEBIAN
+          
+          # Copy the Flutter app and icon into the system structure
+          cp -r build/linux/x64/release/bundle/* deb_pkg/opt/electrowave/
+          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/electrowave.png
+          
+          # Create a symlink so the app can be launched from terminal
+          ln -s /opt/electrowave/electrowave deb_pkg/usr/bin/electrowave
+          
+          # Generate the .desktop file
+          cat <<EOF > deb_pkg/usr/share/applications/electrowave.desktop
+          [Desktop Entry]
+          Version=1.0
+          Name=Electrowave
+          GenericName=Media Player
+          Comment=Play local music files
+          Exec=/opt/electrowave/electrowave
+          Icon=electrowave
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Audio;Player;
+          EOF
+          
+          # Generate the package metadata
+          cat <<EOF > deb_pkg/DEBIAN/control
+          Package: electrowave
+          Version: 1.0.0
+          Architecture: amd64
+          Maintainer: Electrowave Developer
+          Description: A beautiful local media player.
+          EOF
+          
+          # Fix permissions (Strict requirement for Debian packages)
+          chmod -R 755 deb_pkg/
+          
+          # Build the final installer package!
+          dpkg-deb --build deb_pkg electrowave-linux-installer.deb
+
+      - name: Package as AppImage (Universal for ALL Linux)
+        run: |
+          # Download the official AppImage packaging tool
+          wget -qO appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+          # Create the AppDir structure
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
+
+          # Copy the compiled Flutter app
+          cp -r build/linux/x64/release/bundle/* AppDir/usr/bin/
+          cp web/music.png AppDir/usr/share/icons/hicolor/512x512/apps/electrowave.png
+          
+          # AppImage also expects the icon in the root folder
+          cp web/music.png AppDir/electrowave.png
+
+          # Create the .desktop file
+          cat <<EOF > AppDir/usr/share/applications/electrowave.desktop
+          [Desktop Entry]
+          Version=1.0
+          Name=Electrowave
+          GenericName=Media Player
+          Comment=Play local music files
+          Exec=electrowave
+          Icon=electrowave
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Audio;Player;
+          EOF
+          
+          # AppImage also expects the desktop file in the root folder
+          cp AppDir/usr/share/applications/electrowave.desktop AppDir/
+
+          # Create the "AppRun" entry script (Tells the AppImage how to start)
+          cat <<'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/bin/lib:${LD_LIBRARY_PATH}"
+          exec "${HERE}/usr/bin/electrowave" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # Build the final AppImage file!
+          ./appimagetool --appimage-extract-and-run AppDir Electrowave-x86_64.AppImage
+
+      - name: Upload Linux Releases
         uses: actions/upload-artifact@v4
         with:
-          name: electrowave-linux
-          path: build/linux/x64/release/bundle/
+          name: electrowave-linux-releases
+          path: |
+            electrowave-linux-installer.deb
+            Electrowave-x86_64.AppImage
 
   # --- WINDOWS BUILD JOB ---
   build-windows:
