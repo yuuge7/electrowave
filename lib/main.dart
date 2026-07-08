@@ -12,7 +12,7 @@ Future<void> applyPendingDatabaseImport() async {
   try {
     final dir = await getApplicationDocumentsDirectory(); // (or SupportDirectory, whichever you are using)
     
-    // 1. ADD THIS: Target the specific Electrowave subfolder
+    // 1. Target the specific Electrowave subfolder
     final appDir = Directory(p.join(dir.path, 'Electrowave'));
     
     // 2. Point to the files INSIDE that subfolder
@@ -32,6 +32,8 @@ Future<void> applyPendingDatabaseImport() async {
 
       await pendingFile.copy(dbFile.path);
       await pendingFile.delete();
+
+      await File(p.join(appDir.path, 'import_success.flag')).create();
       
       debugPrint("Pending import applied successfully on startup!");
     } else {
@@ -83,5 +85,21 @@ class LocalPlayerApp extends StatelessWidget {
       // This now correctly points to the MainShell layout
       home: const MainShell(), 
     );
+  }
+}
+
+Future<bool> checkAndConsumeImportFlag() async {
+  try {
+    final dir = await getApplicationDocumentsDirectory(); 
+    final appDir = Directory(p.join(dir.path, 'Electrowave'));
+    final flagFile = File(p.join(appDir.path, 'import_success.flag'));
+
+    if (await flagFile.exists()) {
+      await flagFile.delete(); // Consume the flag so it only triggers once
+      return true;
+    }
+    return false;
+  } catch (e) {
+    return false;
   }
 }
