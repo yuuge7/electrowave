@@ -23,27 +23,42 @@ class SettingsView extends ConsumerWidget {
   }
 
   void _handleImport(BuildContext context, WidgetRef ref) async {
+    // 1. Open the File Picker FIRST (No UI blocking)
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select Library Backup',
+      type: FileType.custom,
+      allowedExtensions: ['sqlite', 'db'],
+    );
+
+    // If they hit cancel, abort before doing anything
+    if (result == null || result.files.single.path == null) return;
+    
+    final backupPath = result.files.single.path!;
+
+    // 2. Stop the player to free up database locks
     await ref.read(playerProvider).stop();
     ref.read(currentTrackProvider.notifier).setTrack(null);
 
-    // 1. Show an un-dismissible loading barrier immediately
+    // 3. NOW show the loading barrier
+    if (!context.mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
+      builder: (dialogContext) => const Center(
         child: CircularProgressIndicator(color: Colors.greenAccent)
       ),
     );
 
+    // 4. Run the actual import process
     final database = ref.read(databaseProvider);
-    final success = await ref.read(backupServiceProvider).importDatabase(database);
+    final success = await ref.read(backupServiceProvider).importDatabase(database, backupPath);
     
-    // 2. Remove the loading barrier
+    // 5. Safely close the loading barrier using the root navigator
     if (context.mounted) {
-      Navigator.pop(context); 
+      Navigator.of(context, rootNavigator: true).pop(); 
     }
 
-    // 3. Handle the result
+    // 6. Show the result dialog
     if (context.mounted) {
       if (success) {
         showDialog(
@@ -72,8 +87,6 @@ class SettingsView extends ConsumerWidget {
           )
         );
       } else {
-        // If the import failed (e.g., file permissions), the DB is still closed. 
-        // We MUST force a restart to prevent the isolate crash you saw.
         showDialog(
           context: context,
           barrierDismissible: false,
