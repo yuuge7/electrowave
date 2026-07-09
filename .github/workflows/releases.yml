@@ -1,29 +1,31 @@
-name: Test Desktop Builds
+name: Publish Production Release
 
 on:
   push:
-    branches: [ "testing" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write 
+
 jobs:
-  # --- LINUX TEST BUILD ---
+  # --- LINUX PRODUCTION BUILD ---
   build-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Clone the repository
         uses: actions/checkout@v4
 
-      # 1. Setup the cache for APT packages
+      # 1. Setup the cache for APT packages to skip the 20-minute download
       - name: Cache APT Packages
         uses: actions/cache@v4
         with:
           path: /var/cache/apt/archives
-          key: ${{ runner.os }}-apt-cache
+          key: ${{ runner.os }}-apt-cache-production
 
       # 2. Configure APT to keep downloads, then install dependencies
       - name: Install Linux Dependencies
         run: |
-          # Prevent Ubuntu from auto-deleting downloaded packages
           sudo rm -f /etc/apt/apt.conf.d/docker-clean
           echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/keep-cache
           
@@ -50,21 +52,25 @@ jobs:
           mkdir -p deb_pkg/DEBIAN
           
           cp -r build/linux/x64/release/bundle/* deb_pkg/opt/electrowave/
-          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/electrowave.png
-          
+          # Icon + .desktop must be named after APPLICATION_ID from
+          # linux/CMakeLists.txt so desktop environments can map the running
+          # window (app_id/WM_CLASS) to them — else taskbar icon is generic.
+          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/com.example.electrowave.png
+
           ln -s /opt/electrowave/electrowave deb_pkg/usr/bin/electrowave
-          
-          cat <<EOF > deb_pkg/usr/share/applications/electrowave.desktop
+
+          cat <<EOF > deb_pkg/usr/share/applications/com.example.electrowave.desktop
           [Desktop Entry]
           Version=1.0
           Name=Electrowave
           GenericName=Media Player
           Comment=Play local music files
           Exec=/opt/electrowave/electrowave
-          Icon=electrowave
+          Icon=com.example.electrowave
           Terminal=false
           Type=Application
           Categories=AudioVideo;Audio;Player;
+          StartupWMClass=com.example.electrowave
           EOF
           
           cat <<EOF > deb_pkg/DEBIAN/control
@@ -85,16 +91,13 @@ jobs:
 
       - name: Package for Arch Linux / CachyOS (.pkg.tar.zst)
         run: |
-          # 1. Compress the already-compiled Linux files into a tarball
           cd deb_pkg
           tar -czvf ../electrowave-linux-build.tar.gz opt usr
           cd ..
           
-          # 2. Setup the Arch build directory
           mkdir arch_build
           mv electrowave-linux-build.tar.gz arch_build/
           
-          # 3. Create the Arch PKGBUILD file
           cat <<EOF > arch_build/PKGBUILD
           pkgname=electrowave
           pkgver=1.0.0
@@ -102,42 +105,41 @@ jobs:
           pkgdesc="A beautiful local media player."
           arch=('x86_64')
           license=('custom')
+          # Prebuilt Flutter bundle: no debug symbols to extract, and
+          # stripping could corrupt the AOT snapshot. Without !debug makepkg
+          # also emits a second electrowave-debug package, which breaks the
+          # single-file mv below.
           options=('!debug' '!strip')
           depends=('gtk3' 'mpv' 'libayatana-appindicator')
           source=("electrowave-linux-build.tar.gz")
           sha256sums=('SKIP')
           
           package() {
-              # makepkg automatically extracts the tarball into \$srcdir
               cp -r "\$srcdir/opt" "\$pkgdir/"
               cp -r "\$srcdir/usr" "\$pkgdir/"
           }
           EOF
           
-          # 4. Use a temporary Arch Linux Docker container to build the package
           docker run --rm -v ${{ github.workspace }}/arch_build:/build archlinux /bin/bash -c "
             pacman -Sy --noconfirm base-devel
             useradd -m builder
             chown -R builder:builder /build
             cd /build
-            # Run makepkg with -d (nodeps) so it doesn't fail checking for mpv inside the minimal container
             su builder -c 'makepkg -cfd'
           "
           
-          # 5. Move the finished package out for upload with the new, shorter name
-          sudo mv arch_build/*.pkg.tar.zst ./electrowave.pkg.tar.zst
-          sudo chown "$(id -u):$(id -g)" ./electrowave.pkg.tar.zst
+          mv arch_build/*.pkg.tar.zst ./electrowave.pkg.tar.zst
 
-      - name: Upload Linux Artifacts (Internal Testing)
+      - name: Upload Linux Artifacts (Temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: electrowave-linux-testing
+          name: electrowave-linux-release-files
           path: |
             electrowave-linux-installer.deb
             electrowave-linux-installer.rpm
             electrowave.pkg.tar.zst
 
-  # --- WINDOWS TEST BUILD ---
+  # --- WINDOWS PRODUCTION BUILD ---
   build-windows:
     runs-on: windows-latest
     steps:
@@ -158,8 +160,37 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
-      - name: Upload Windows Artifact
+      - name: Zip Windows Release
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath electrowave-windows-x64.zip
+
+      - name: Upload Windows Artifact (Temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: electrowave-windows-testing
-          path: build\windows\x64\runner\Release\
+          name: electrowave-windows-release-files
+          path: electrowave-windows-x64.zip
+
+  # --- CREATE OFFICIAL GITHUB RELEASE ---
+  publish-release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux Installers
+        uses: actions/download-artifact@v4
+        with:
+          name: electrowave-linux-release-files
+          path: final_assets
+
+      - name: Download Windows Zip
+        uses: actions/download-artifact@v4
+        with:
+          name: electrowave-windows-release-files
+          path: final_assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Electrowave Update v1.0.${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: final_assets/*

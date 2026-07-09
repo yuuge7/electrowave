@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../main.dart';
 import '../../player/providers/player_provider.dart';
+import '../../player/providers/queue_provider.dart';
 import '../providers/wrapped_stats_provider.dart';
 import '../services/backup_service.dart';
 
@@ -23,35 +24,46 @@ class SettingsView extends ConsumerWidget {
   }
 
   void _handleImport(BuildContext context, WidgetRef ref) async {
-    await ref.read(playerProvider).stop();
-    ref.read(currentTrackProvider.notifier).setTrack(null);
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select Library Backup',
+      type: FileType.custom,
+      allowedExtensions: ['sqlite', 'db'],
+    );
 
-    // Grab the database instance and pass it to the import service
-    final database = ref.read(databaseProvider);
-    final success = await ref.read(backupServiceProvider).importDatabase(database);
+    if (result == null || result.files.single.path == null) return;
+    final backupPath = result.files.single.path!;
+
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => const Center(
+        child: CircularProgressIndicator(color: Colors.greenAccent)
+      ),
+    );
+
+    // STAGE the file instead of trying to overwrite the locked database
+    final success = await ref.read(backupServiceProvider).stageImport(backupPath);
     
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop(); 
+    }
+
     if (context.mounted && success) {
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF181818),
-          title: const Text('Import Successful', style: TextStyle(color: Colors.greenAccent)),
+          title: const Text('Import Ready', style: TextStyle(color: Colors.greenAccent)),
           content: const Text(
-            'Backup restored!\n\nAre your music files located in the exact same absolute path as before, or did you move them to a new folder/OS?', 
+            'Backup file has been staged successfully!\n\nBecause Windows locks active databases, the app must be restarted to apply the new library.', 
             style: TextStyle(color: Colors.white70)
           ),
           actions: [
             TextButton(
               onPressed: () => exit(0), 
-              child: const Text('Same Location (Restart)', style: TextStyle(color: Colors.grey)),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context); 
-                _startRelocationFlow(context, ref);
-              },
-              child: const Text('New Location (Relocate)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+              child: const Text('Close App Now', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
             ),
           ],
         )
@@ -117,6 +129,7 @@ class SettingsView extends ConsumerWidget {
               
               await player.stop();
               ref.read(currentTrackProvider.notifier).setTrack(null);
+              ref.read(queueProvider.notifier).reset();
 
               await database.delete(database.playbackHistory).go();
               await database.delete(database.playlistTracks).go();

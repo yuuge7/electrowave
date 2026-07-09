@@ -1,10 +1,51 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:metadata_god/metadata_god.dart';
-
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
+import 'shared/services/linux_desktop_integration.dart';
+import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
+
+Future<void> applyPendingDatabaseImport() async {
+  try {
+    final dir = await getApplicationDocumentsDirectory(); // (or SupportDirectory, whichever you are using)
+    
+    // 1. Target the specific Electrowave subfolder
+    final appDir = Directory(p.join(dir.path, 'Electrowave'));
+    
+    // 2. Point to the files INSIDE that subfolder
+    final dbFile = File(p.join(appDir.path, 'local_player_db.sqlite'));
+    final pendingFile = File(p.join(appDir.path, 'pending_import.sqlite'));
+
+    debugPrint("=== BOOT LOOKING FOR: ${pendingFile.path} ===");
+
+    if (await pendingFile.exists()) {
+      debugPrint("Found pending import! Overwriting database...");
+      
+      final walFile = File('${dbFile.path}-wal');
+      final shmFile = File('${dbFile.path}-shm');
+      
+      if (await walFile.exists()) await walFile.delete();
+      if (await shmFile.exists()) await shmFile.delete();
+
+      await pendingFile.copy(dbFile.path);
+      await pendingFile.delete();
+
+      await File(p.join(appDir.path, 'import_success.flag')).create();
+      
+      debugPrint("Pending import applied successfully on startup!");
+    } else {
+      debugPrint("No pending import found. Normal boot sequence.");
+    }
+  } catch (e) {
+    debugPrint("Error applying pending import: $e");
+  }
+}
 
 // Global database instance provided via Riverpod
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -13,6 +54,23 @@ final databaseProvider = Provider<AppDatabase>((ref) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Needed for hide-to-tray (show/hide/focus the native window)
+  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+
+    // Single instance: if Electrowave is already running, tell it to show
+    // its window and exit this process.
+    if (!await SingleInstanceService.ensurePrimary()) {
+      exit(0);
+    }
+  }
+
+  // Install .desktop file + icon so the taskbar/launcher shows our icon
+  await LinuxDesktopIntegration.ensureInstalled();
+
+  // Intercept and apply the database before starting the app
+  await applyPendingDatabaseImport();
 
   // Initialize native media playback engine
   MediaKit.ensureInitialized();
@@ -44,5 +102,21 @@ class LocalPlayerApp extends StatelessWidget {
       // This now correctly points to the MainShell layout
       home: const MainShell(), 
     );
+  }
+}
+
+Future<bool> checkAndConsumeImportFlag() async {
+  try {
+    final dir = await getApplicationDocumentsDirectory(); 
+    final appDir = Directory(p.join(dir.path, 'Electrowave'));
+    final flagFile = File(p.join(appDir.path, 'import_success.flag'));
+
+    if (await flagFile.exists()) {
+      await flagFile.delete(); // Consume the flag so it only triggers once
+      return true;
+    }
+    return false;
+  } catch (e) {
+    return false;
   }
 }

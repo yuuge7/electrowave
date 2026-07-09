@@ -17,6 +17,7 @@ class Tracks extends Table {
   IntColumn get durationMs => integer()();
   TextColumn get coverArtPath => text().nullable()();
   TextColumn get genre => text().nullable()();
+  BoolColumn get isDeleted => boolean().withDefault(const Constant(false))();
 }
 
 class Playlists extends Table {
@@ -45,9 +46,8 @@ class PlaybackHistory extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
-  // Bumped to version 5 for the new history table
   @override
-  int get schemaVersion => 5; 
+  int get schemaVersion => 6; 
   
   @override
   MigrationStrategy get migration {
@@ -67,8 +67,10 @@ class AppDatabase extends _$AppDatabase {
           await m.createTable(playlistTracks);
         }
         if (from < 5) {
-          // Create the new history table safely
           await m.createTable(playbackHistory);
+        }
+        if(from < 6) {
+          await m.addColumn(tracks, tracks.isDeleted);
         }
       },
     );

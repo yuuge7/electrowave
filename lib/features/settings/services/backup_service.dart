@@ -45,30 +45,20 @@ class BackupService {
     }
   }
 
-  /// Imports a database from a user-selected file
-  Future<bool> importDatabase(db.AppDatabase database) async {
+  // importDatabase renamed to stageImport for clarity
+  Future<bool> stageImport(String backupFilePath) async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        dialogTitle: 'Select Library Backup',
-        type: FileType.custom,
-        allowedExtensions: ['sqlite', 'db'],
-      );
-
-      // If they hit cancel, we return false BEFORE closing the database
-      if (result == null || result.files.single.path == null) return false;
-
-      final sourceFile = File(result.files.single.path!);
+      final sourceFile = File(backupFilePath);
       final dbFile = await _getDbFile();
-
-      // --- THE WINDOWS FIX ---
-      // Close the active Drift connection to release the Windows file lock
-      await database.close();
-
-      // Overwrite the current database with the backup
-      await sourceFile.copy(dbFile.path);
+      
+      // FIX: Use p.join to handle Windows (\) and Linux (/) slashes automatically
+      final pendingFile = File(p.join(dbFile.parent.path, 'pending_import.sqlite'));
+      
+      await sourceFile.copy(pendingFile.path);
+      debugPrint("=== STAGING SAVED TO: ${pendingFile.path} ===");
       return true;
     } catch (e) {
-      debugPrint('Import error: $e');
+      debugPrint('Stage error: $e');
       return false;
     }
   }

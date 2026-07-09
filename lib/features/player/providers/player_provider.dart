@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import '../../../core/database/app_database.dart' as db;
-import '../../library/providers/library_provider.dart';
+import 'queue_provider.dart';
 
 // --- 1. REPEAT AND SHUFFLE STATES ---
 
@@ -50,77 +50,119 @@ class PlaybackController {
   final Ref ref;
   PlaybackController(this.ref);
 
-  void playNextTrack() {
-    final player = ref.read(playerProvider);
+  void _play(db.Track track) {
+    ref.read(currentTrackProvider.notifier).setTrack(track);
+    ref.read(playerProvider).open(Media(track.filePath));
+  }
+
+  /// Entry point for the UI: the user clicked the track at [index] inside
+  /// [tracks] (a playlist, the library, search results...). That list
+  /// becomes the playback context that next/previous walk through.
+  void playFromContext(List<db.Track> tracks, int index) {
+    if (index < 0 || index >= tracks.length) return;
+    ref.read(queueProvider.notifier).setContext(tracks, index);
+    _play(tracks[index]);
+  }
+
+  /// Plays [track] immediately without touching the context, and resumes
+  /// the context afterwards (used when tapping a manual-queue item).
+  void playQueuedTrackNow(db.Track track) {
+    final queue = ref.read(queueProvider);
+    final queueIndex = queue.manualQueue.indexWhere((t) => t.id == track.id);
+    if (queueIndex != -1) {
+      ref.read(queueProvider.notifier).removeFromQueue(queueIndex);
+    }
+    ref.read(queueProvider.notifier).markPlayingFromManualQueue();
+    _play(track);
+  }
+
+  void playNextTrack({bool fromCompletion = false}) {
     final repeatMode = ref.read(repeatModeProvider);
-    final isShuffle = ref.read(shuffleProvider);
     final currentTrack = ref.read(currentTrackProvider);
-    
-    final libraryState = ref.read(libraryProvider);
-    final allTracks = libraryState.value ?? [];
+    final queueNotifier = ref.read(queueProvider.notifier);
 
-    if (allTracks.isEmpty) return;
-
-    if (repeatMode == PlaybackRepeatMode.one) {
+    // Repeat-one only loops on natural completion; a manual "next" still
+    // advances (Spotify behavior).
+    if (repeatMode == PlaybackRepeatMode.one && fromCompletion) {
       if (currentTrack != null) {
-        player.open(Media(currentTrack.filePath));
+        ref.read(playerProvider).open(Media(currentTrack.filePath));
       }
       return;
     }
 
-    if (isShuffle) {
+    // The manual queue always plays before the context resumes.
+    final queued = queueNotifier.popManualQueue();
+    if (queued != null) {
+      _play(queued);
+      return;
+    }
+
+    final queue = ref.read(queueProvider);
+    final context = queue.context;
+    if (context.isEmpty) return;
+
+    if (ref.read(shuffleProvider)) {
       final random = Random();
-      final nextTrack = allTracks[random.nextInt(allTracks.length)];
-      ref.read(currentTrackProvider.notifier).setTrack(nextTrack);
-      player.open(Media(nextTrack.filePath));
+      int nextIndex = random.nextInt(context.length);
+      // Avoid immediately repeating the same track when there's a choice.
+      if (context.length > 1 && nextIndex == queue.contextIndex) {
+        nextIndex = (nextIndex + 1) % context.length;
+      }
+      queueNotifier.moveToContextIndex(nextIndex);
+      _play(context[nextIndex]);
       return;
     }
 
-    if (currentTrack != null) {
-      int currentIndex = allTracks.indexWhere((t) => t.id == currentTrack.id);
-      if (currentIndex != -1) {
-        int nextIndex = currentIndex + 1;
-        
-        if (nextIndex >= allTracks.length) {
-          if (repeatMode == PlaybackRepeatMode.all) {
-            nextIndex = 0; 
-          } else {
-            return; 
-          }
-        }
-        
-        final nextTrack = allTracks[nextIndex];
-        ref.read(currentTrackProvider.notifier).setTrack(nextTrack);
-        player.open(Media(nextTrack.filePath));
+    // While a manual-queue track plays, contextIndex still points at the
+    // track it interrupted, so +1 resumes the context correctly.
+    int nextIndex = queue.contextIndex + 1;
+    if (nextIndex >= context.length) {
+      if (repeatMode == PlaybackRepeatMode.all) {
+        nextIndex = 0;
+      } else {
+        return;
       }
     }
+    queueNotifier.moveToContextIndex(nextIndex);
+    _play(context[nextIndex]);
   }
 
   void playPreviousTrack() {
     final player = ref.read(playerProvider);
-    final position = player.state.position;
-    
-    if (position > const Duration(seconds: 3)) {
+
+    if (player.state.position > const Duration(seconds: 3)) {
       player.seek(Duration.zero);
       return;
     }
 
-    final currentTrack = ref.read(currentTrackProvider);
-    final libraryState = ref.read(libraryProvider);
-    final allTracks = libraryState.value ?? [];
+    final queue = ref.read(queueProvider);
+    final context = queue.context;
+    if (context.isEmpty) {
+      player.seek(Duration.zero);
+      return;
+    }
 
-    if (allTracks.isEmpty) return;
-
-    if (currentTrack != null) {
-      int currentIndex = allTracks.indexWhere((t) => t.id == currentTrack.id);
-      if (currentIndex > 0) {
-        final prevTrack = allTracks[currentIndex - 1];
-        ref.read(currentTrackProvider.notifier).setTrack(prevTrack);
-        player.open(Media(prevTrack.filePath));
+    // From a manual-queue track, "previous" returns to the context track
+    // it interrupted.
+    if (queue.playingFromManualQueue) {
+      if (queue.contextIndex >= 0 && queue.contextIndex < context.length) {
+        ref
+            .read(queueProvider.notifier)
+            .moveToContextIndex(queue.contextIndex);
+        _play(context[queue.contextIndex]);
       } else {
         player.seek(Duration.zero);
       }
+      return;
     }
+
+    final prevIndex = queue.contextIndex - 1;
+    if (prevIndex < 0) {
+      player.seek(Duration.zero);
+      return;
+    }
+    ref.read(queueProvider.notifier).moveToContextIndex(prevIndex);
+    _play(context[prevIndex]);
   }
 }
 
@@ -137,7 +179,7 @@ final playerProvider = Provider<Player>((ref) {
   player.stream.completed.listen((completed) {
     if (completed) {
       Future.microtask(() {
-        ref.read(playbackControllerProvider).playNextTrack();
+        ref.read(playbackControllerProvider).playNextTrack(fromCompletion: true);
       });
     }
   });

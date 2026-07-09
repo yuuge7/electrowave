@@ -90,6 +90,21 @@ class $TracksTable extends Tracks with TableInfo<$TracksTable, Track> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _isDeletedMeta = const VerificationMeta(
+    'isDeleted',
+  );
+  @override
+  late final GeneratedColumn<bool> isDeleted = GeneratedColumn<bool>(
+    'is_deleted',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_deleted" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -100,6 +115,7 @@ class $TracksTable extends Tracks with TableInfo<$TracksTable, Track> {
     durationMs,
     coverArtPath,
     genre,
+    isDeleted,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -171,6 +187,12 @@ class $TracksTable extends Tracks with TableInfo<$TracksTable, Track> {
         genre.isAcceptableOrUnknown(data['genre']!, _genreMeta),
       );
     }
+    if (data.containsKey('is_deleted')) {
+      context.handle(
+        _isDeletedMeta,
+        isDeleted.isAcceptableOrUnknown(data['is_deleted']!, _isDeletedMeta),
+      );
+    }
     return context;
   }
 
@@ -212,6 +234,10 @@ class $TracksTable extends Tracks with TableInfo<$TracksTable, Track> {
         DriftSqlType.string,
         data['${effectivePrefix}genre'],
       ),
+      isDeleted: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_deleted'],
+      )!,
     );
   }
 
@@ -230,6 +256,7 @@ class Track extends DataClass implements Insertable<Track> {
   final int durationMs;
   final String? coverArtPath;
   final String? genre;
+  final bool isDeleted;
   const Track({
     required this.id,
     required this.filePath,
@@ -239,6 +266,7 @@ class Track extends DataClass implements Insertable<Track> {
     required this.durationMs,
     this.coverArtPath,
     this.genre,
+    required this.isDeleted,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -255,6 +283,7 @@ class Track extends DataClass implements Insertable<Track> {
     if (!nullToAbsent || genre != null) {
       map['genre'] = Variable<String>(genre);
     }
+    map['is_deleted'] = Variable<bool>(isDeleted);
     return map;
   }
 
@@ -272,6 +301,7 @@ class Track extends DataClass implements Insertable<Track> {
       genre: genre == null && nullToAbsent
           ? const Value.absent()
           : Value(genre),
+      isDeleted: Value(isDeleted),
     );
   }
 
@@ -289,6 +319,7 @@ class Track extends DataClass implements Insertable<Track> {
       durationMs: serializer.fromJson<int>(json['durationMs']),
       coverArtPath: serializer.fromJson<String?>(json['coverArtPath']),
       genre: serializer.fromJson<String?>(json['genre']),
+      isDeleted: serializer.fromJson<bool>(json['isDeleted']),
     );
   }
   @override
@@ -303,6 +334,7 @@ class Track extends DataClass implements Insertable<Track> {
       'durationMs': serializer.toJson<int>(durationMs),
       'coverArtPath': serializer.toJson<String?>(coverArtPath),
       'genre': serializer.toJson<String?>(genre),
+      'isDeleted': serializer.toJson<bool>(isDeleted),
     };
   }
 
@@ -315,6 +347,7 @@ class Track extends DataClass implements Insertable<Track> {
     int? durationMs,
     Value<String?> coverArtPath = const Value.absent(),
     Value<String?> genre = const Value.absent(),
+    bool? isDeleted,
   }) => Track(
     id: id ?? this.id,
     filePath: filePath ?? this.filePath,
@@ -324,6 +357,7 @@ class Track extends DataClass implements Insertable<Track> {
     durationMs: durationMs ?? this.durationMs,
     coverArtPath: coverArtPath.present ? coverArtPath.value : this.coverArtPath,
     genre: genre.present ? genre.value : this.genre,
+    isDeleted: isDeleted ?? this.isDeleted,
   );
   Track copyWithCompanion(TracksCompanion data) {
     return Track(
@@ -339,6 +373,7 @@ class Track extends DataClass implements Insertable<Track> {
           ? data.coverArtPath.value
           : this.coverArtPath,
       genre: data.genre.present ? data.genre.value : this.genre,
+      isDeleted: data.isDeleted.present ? data.isDeleted.value : this.isDeleted,
     );
   }
 
@@ -352,7 +387,8 @@ class Track extends DataClass implements Insertable<Track> {
           ..write('album: $album, ')
           ..write('durationMs: $durationMs, ')
           ..write('coverArtPath: $coverArtPath, ')
-          ..write('genre: $genre')
+          ..write('genre: $genre, ')
+          ..write('isDeleted: $isDeleted')
           ..write(')'))
         .toString();
   }
@@ -367,6 +403,7 @@ class Track extends DataClass implements Insertable<Track> {
     durationMs,
     coverArtPath,
     genre,
+    isDeleted,
   );
   @override
   bool operator ==(Object other) =>
@@ -379,7 +416,8 @@ class Track extends DataClass implements Insertable<Track> {
           other.album == this.album &&
           other.durationMs == this.durationMs &&
           other.coverArtPath == this.coverArtPath &&
-          other.genre == this.genre);
+          other.genre == this.genre &&
+          other.isDeleted == this.isDeleted);
 }
 
 class TracksCompanion extends UpdateCompanion<Track> {
@@ -391,6 +429,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
   final Value<int> durationMs;
   final Value<String?> coverArtPath;
   final Value<String?> genre;
+  final Value<bool> isDeleted;
   const TracksCompanion({
     this.id = const Value.absent(),
     this.filePath = const Value.absent(),
@@ -400,6 +439,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
     this.durationMs = const Value.absent(),
     this.coverArtPath = const Value.absent(),
     this.genre = const Value.absent(),
+    this.isDeleted = const Value.absent(),
   });
   TracksCompanion.insert({
     this.id = const Value.absent(),
@@ -410,6 +450,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
     required int durationMs,
     this.coverArtPath = const Value.absent(),
     this.genre = const Value.absent(),
+    this.isDeleted = const Value.absent(),
   }) : filePath = Value(filePath),
        title = Value(title),
        artist = Value(artist),
@@ -424,6 +465,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
     Expression<int>? durationMs,
     Expression<String>? coverArtPath,
     Expression<String>? genre,
+    Expression<bool>? isDeleted,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -434,6 +476,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
       if (durationMs != null) 'duration_ms': durationMs,
       if (coverArtPath != null) 'cover_art_path': coverArtPath,
       if (genre != null) 'genre': genre,
+      if (isDeleted != null) 'is_deleted': isDeleted,
     });
   }
 
@@ -446,6 +489,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
     Value<int>? durationMs,
     Value<String?>? coverArtPath,
     Value<String?>? genre,
+    Value<bool>? isDeleted,
   }) {
     return TracksCompanion(
       id: id ?? this.id,
@@ -456,6 +500,7 @@ class TracksCompanion extends UpdateCompanion<Track> {
       durationMs: durationMs ?? this.durationMs,
       coverArtPath: coverArtPath ?? this.coverArtPath,
       genre: genre ?? this.genre,
+      isDeleted: isDeleted ?? this.isDeleted,
     );
   }
 
@@ -486,6 +531,9 @@ class TracksCompanion extends UpdateCompanion<Track> {
     if (genre.present) {
       map['genre'] = Variable<String>(genre.value);
     }
+    if (isDeleted.present) {
+      map['is_deleted'] = Variable<bool>(isDeleted.value);
+    }
     return map;
   }
 
@@ -499,7 +547,8 @@ class TracksCompanion extends UpdateCompanion<Track> {
           ..write('album: $album, ')
           ..write('durationMs: $durationMs, ')
           ..write('coverArtPath: $coverArtPath, ')
-          ..write('genre: $genre')
+          ..write('genre: $genre, ')
+          ..write('isDeleted: $isDeleted')
           ..write(')'))
         .toString();
   }
@@ -1194,6 +1243,7 @@ typedef $$TracksTableCreateCompanionBuilder =
       required int durationMs,
       Value<String?> coverArtPath,
       Value<String?> genre,
+      Value<bool> isDeleted,
     });
 typedef $$TracksTableUpdateCompanionBuilder =
     TracksCompanion Function({
@@ -1205,6 +1255,7 @@ typedef $$TracksTableUpdateCompanionBuilder =
       Value<int> durationMs,
       Value<String?> coverArtPath,
       Value<String?> genre,
+      Value<bool> isDeleted,
     });
 
 class $$TracksTableFilterComposer
@@ -1253,6 +1304,11 @@ class $$TracksTableFilterComposer
 
   ColumnFilters<String> get genre => $composableBuilder(
     column: $table.genre,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDeleted => $composableBuilder(
+    column: $table.isDeleted,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1305,6 +1361,11 @@ class $$TracksTableOrderingComposer
     column: $table.genre,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get isDeleted => $composableBuilder(
+    column: $table.isDeleted,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$TracksTableAnnotationComposer
@@ -1343,6 +1404,9 @@ class $$TracksTableAnnotationComposer
 
   GeneratedColumn<String> get genre =>
       $composableBuilder(column: $table.genre, builder: (column) => column);
+
+  GeneratedColumn<bool> get isDeleted =>
+      $composableBuilder(column: $table.isDeleted, builder: (column) => column);
 }
 
 class $$TracksTableTableManager
@@ -1381,6 +1445,7 @@ class $$TracksTableTableManager
                 Value<int> durationMs = const Value.absent(),
                 Value<String?> coverArtPath = const Value.absent(),
                 Value<String?> genre = const Value.absent(),
+                Value<bool> isDeleted = const Value.absent(),
               }) => TracksCompanion(
                 id: id,
                 filePath: filePath,
@@ -1390,6 +1455,7 @@ class $$TracksTableTableManager
                 durationMs: durationMs,
                 coverArtPath: coverArtPath,
                 genre: genre,
+                isDeleted: isDeleted,
               ),
           createCompanionCallback:
               ({
@@ -1401,6 +1467,7 @@ class $$TracksTableTableManager
                 required int durationMs,
                 Value<String?> coverArtPath = const Value.absent(),
                 Value<String?> genre = const Value.absent(),
+                Value<bool> isDeleted = const Value.absent(),
               }) => TracksCompanion.insert(
                 id: id,
                 filePath: filePath,
@@ -1410,6 +1477,7 @@ class $$TracksTableTableManager
                 durationMs: durationMs,
                 coverArtPath: coverArtPath,
                 genre: genre,
+                isDeleted: isDeleted,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
