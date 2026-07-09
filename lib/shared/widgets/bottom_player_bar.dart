@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import '../services/tray_service.dart';
 import '../../features/player/providers/player_provider.dart';
+import '../../features/player/providers/queue_provider.dart';
 
 class BottomPlayerBar extends ConsumerWidget {
   const BottomPlayerBar({super.key});
@@ -219,6 +220,21 @@ class BottomPlayerBar extends ConsumerWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
+                        // Queue panel toggle (like Spotify's queue button)
+                        Consumer(builder: (context, ref, _) {
+                          final queueVisible =
+                              ref.watch(queuePanelVisibleProvider);
+                          return IconButton(
+                            tooltip: 'Queue',
+                            icon: const Icon(Icons.queue_music, size: 22),
+                            color:
+                                queueVisible ? Colors.greenAccent : Colors.grey,
+                            onPressed: () => ref
+                                .read(queuePanelVisibleProvider.notifier)
+                                .toggle(),
+                          );
+                        }),
+
                         StreamBuilder<double>(
                           stream: player.stream.volume,
                           builder: (context, snapshot) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../main.dart';
 import '../../player/providers/player_provider.dart';
+import '../../player/providers/queue_provider.dart';
 import '../providers/wrapped_stats_provider.dart';
 import '../services/backup_service.dart';
 
@@ -128,6 +129,7 @@ class SettingsView extends ConsumerWidget {
               
               await player.stop();
               ref.read(currentTrackProvider.notifier).setTrack(null);
+              ref.read(queueProvider.notifier).reset();
 
               await database.delete(database.playbackHistory).go();
               await database.delete(database.playlistTracks).go();

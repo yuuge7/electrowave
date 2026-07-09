@@ -4,14 +4,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+import '../services/single_instance_service.dart';
 import '../services/tray_service.dart';
 import '../../features/library/views/library_view.dart';
 import '../../features/playlists/views/playlists_view.dart';
 import '../../features/stats/views/stats_view.dart';
 import '../../features/settings/views/settings_view.dart';
 import '../../features/player/providers/player_provider.dart';
+import '../../features/player/providers/queue_provider.dart';
 import '../../features/player/services/scrobbling_service.dart';
 import 'bottom_player_bar.dart';
+import 'queue_panel.dart';
 
 // ADDED THIS IMPORT: Adjust the relative path to main.dart if your folder structure requires it!
 import '../../../main.dart'; 
@@ -138,6 +141,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
       case 'next':
         playbackController.playNextTrack();
       case 'quit':
+        await SingleInstanceService.dispose();
         await trayManager.destroy();
         await windowManager.destroy();
     }
@@ -228,6 +232,9 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
                 Expanded(
                   child: _screens[_selectedIndex],
                 ),
+
+                // Spotify-style queue side panel
+                if (ref.watch(queuePanelVisibleProvider)) const QueuePanel(),
               ],
             ),
           ),

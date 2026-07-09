@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
+import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
 
 Future<void> applyPendingDatabaseImport() async {
@@ -56,6 +57,12 @@ void main() async {
   // Needed for hide-to-tray (show/hide/focus the native window)
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
     await windowManager.ensureInitialized();
+
+    // Single instance: if Electrowave is already running, tell it to show
+    // its window and exit this process.
+    if (!await SingleInstanceService.ensurePrimary()) {
+      exit(0);
+    }
   }
 
   // Intercept and apply the database before starting the app

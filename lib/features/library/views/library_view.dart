@@ -1,12 +1,12 @@
 import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:drift/drift.dart' as drift; // Added for soft delete Value()
 
 import '../providers/library_provider.dart';
 import '../../player/services/metadata_scanner.dart';
 import '../../player/providers/player_provider.dart';
+import '../../player/providers/queue_provider.dart';
 import '../../playlists/providers/playlists_provider.dart';
 import '../../../main.dart';
 import '../../../core/database/app_database.dart' as db;
@@ -32,15 +32,51 @@ class LibraryView extends ConsumerWidget {
     return '$minutes:$seconds';
   }
 
-  DataCell _buildRightClickableCell(BuildContext context, db.Track track, String text) {
+  void _showTrackMenu(BuildContext context, WidgetRef ref, db.Track track, Offset position) {
+    showMenu<String>(
+      context: context,
+      color: const Color(0xFF282828),
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(
+          value: 'queue',
+          child: Row(
+            children: [
+              Icon(Icons.queue_music, color: Colors.white70, size: 18),
+              SizedBox(width: 10),
+              Text('Add to queue', style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'playlist',
+          child: Row(
+            children: [
+              Icon(Icons.playlist_add, color: Colors.white70, size: 18),
+              SizedBox(width: 10),
+              Text('Add to playlist…', style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'queue') {
+        ref.read(queueProvider.notifier).addToQueue(track);
+      } else if (value == 'playlist' && context.mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AddToPlaylistDialog(track: track),
+        );
+      }
+    });
+  }
+
+  DataCell _buildRightClickableCell(BuildContext context, WidgetRef ref, db.Track track, String text) {
     return DataCell(
       GestureDetector(
-        behavior: HitTestBehavior.opaque, 
+        behavior: HitTestBehavior.opaque,
         onSecondaryTapDown: (details) {
-          showDialog(
-            context: context,
-            builder: (context) => AddToPlaylistDialog(track: track),
-          );
+          _showTrackMenu(context, ref, track, details.globalPosition);
         },
         child: Container(
           alignment: Alignment.centerLeft,
@@ -89,7 +125,6 @@ class LibraryView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final libraryAsync = ref.watch(libraryProvider);
     final database = ref.read(databaseProvider);
-    final player = ref.read(playerProvider);
     final searchQuery = ref.watch(searchQueryProvider);
 
     return Scaffold(
@@ -188,27 +223,32 @@ class LibraryView extends ConsumerWidget {
                     DataColumn2(label: Text('Duration', style: TextStyle(color: Colors.white)), size: ColumnSize.S),
                     DataColumn2(label: Text(''), size: ColumnSize.S, fixedWidth: 50),
                   ],
-                  rows: filteredTracks.map((db.Track track) => DataRow(
-                    onSelectChanged: (selected) {
-                      if (selected ?? false) {
-                        ref.read(currentTrackProvider.notifier).setTrack(track);
-                        player.open(Media(track.filePath));
-                      }
-                    },
-                    cells: [
-                      _buildRightClickableCell(context, track, track.title),
-                      _buildRightClickableCell(context, track, track.artist),
-                      _buildRightClickableCell(context, track, track.album),
-                      _buildRightClickableCell(context, track, _formatDurationMs(track.durationMs)),
-                      DataCell(
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 20),
-                          onPressed: () => _confirmDeleteTrack(context, ref, track),
-                          hoverColor: Colors.redAccent.withValues(alpha: 0.1),
-                        )
-                      ),
-                    ],
-                  )).toList(),
+                  rows: List<DataRow>.generate(filteredTracks.length, (index) {
+                    final track = filteredTracks[index];
+                    return DataRow(
+                      onSelectChanged: (selected) {
+                        if (selected ?? false) {
+                          // The filtered list becomes the playback context,
+                          // so next/previous stay inside what's on screen.
+                          ref.read(playbackControllerProvider)
+                              .playFromContext(filteredTracks, index);
+                        }
+                      },
+                      cells: [
+                        _buildRightClickableCell(context, ref, track, track.title),
+                        _buildRightClickableCell(context, ref, track, track.artist),
+                        _buildRightClickableCell(context, ref, track, track.album),
+                        _buildRightClickableCell(context, ref, track, _formatDurationMs(track.durationMs)),
+                        DataCell(
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 20),
+                            onPressed: () => _confirmDeleteTrack(context, ref, track),
+                            hoverColor: Colors.redAccent.withValues(alpha: 0.1),
+                          )
+                        ),
+                      ],
+                    );
+                  }),
                 );
               },
               loading: () => const Center(child: CircularProgressIndicator(color: Colors.greenAccent)),

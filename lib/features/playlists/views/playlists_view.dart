@@ -1,10 +1,10 @@
 import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
 import '../providers/playlists_provider.dart';
 import '../../player/providers/player_provider.dart';
-import '../../../main.dart'; 
+import '../../player/providers/queue_provider.dart';
+import '../../../main.dart';
 import '../../../core/database/app_database.dart' as db;
 
 class PlaylistsView extends ConsumerWidget {
@@ -15,6 +15,46 @@ class PlaylistsView extends ConsumerWidget {
     final minutes = duration.inMinutes.toString().padLeft(2, '0');
     final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+
+  DataCell _queueMenuCell(BuildContext context, WidgetRef ref, db.Track track, String text) {
+    return DataCell(
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: (details) {
+          showMenu<String>(
+            context: context,
+            color: const Color(0xFF282828),
+            position: RelativeRect.fromLTRB(
+              details.globalPosition.dx,
+              details.globalPosition.dy,
+              details.globalPosition.dx,
+              details.globalPosition.dy,
+            ),
+            items: const [
+              PopupMenuItem(
+                value: 'queue',
+                child: Row(
+                  children: [
+                    Icon(Icons.queue_music, color: Colors.white70, size: 18),
+                    SizedBox(width: 10),
+                    Text('Add to queue', style: TextStyle(color: Colors.white70)),
+                  ],
+                ),
+              ),
+            ],
+          ).then((value) {
+            if (value == 'queue') {
+              ref.read(queueProvider.notifier).addToQueue(track);
+            }
+          });
+        },
+        child: Container(
+          alignment: Alignment.centerLeft,
+          child: Text(text, style: const TextStyle(color: Colors.white70)),
+        ),
+      ),
+    );
   }
 
   void _confirmDeletePlaylist(BuildContext context, WidgetRef ref, db.Playlist playlist) {
@@ -124,7 +164,6 @@ class PlaylistsView extends ConsumerWidget {
                 : Consumer(
                     builder: (context, ref, child) {
                       final tracksAsync = ref.watch(playlistTracksProvider(selectedPlaylistId));
-                      final player = ref.read(playerProvider);
 
                       return tracksAsync.when(
                         data: (tracks) {
@@ -142,19 +181,24 @@ class PlaylistsView extends ConsumerWidget {
                               DataColumn2(label: Text('Artist', style: TextStyle(color: Colors.white))),
                               DataColumn2(label: Text('Duration', style: TextStyle(color: Colors.white)), size: ColumnSize.S),
                             ],
-                            rows: tracks.map((db.Track track) => DataRow(
-                              onSelectChanged: (selected) {
-                                if (selected ?? false) {
-                                  ref.read(currentTrackProvider.notifier).setTrack(track);
-                                  player.open(Media(track.filePath));
-                                }
-                              },
-                              cells: [
-                                DataCell(Text(track.title, style: const TextStyle(color: Colors.white70))),
-                                DataCell(Text(track.artist, style: const TextStyle(color: Colors.white70))),
-                                DataCell(Text(_formatDurationMs(track.durationMs), style: const TextStyle(color: Colors.white70))),
-                              ],
-                            )).toList(),
+                            rows: List<DataRow>.generate(tracks.length, (index) {
+                              final track = tracks[index];
+                              return DataRow(
+                                onSelectChanged: (selected) {
+                                  if (selected ?? false) {
+                                    // The playlist becomes the playback
+                                    // context: next/previous stay inside it.
+                                    ref.read(playbackControllerProvider)
+                                        .playFromContext(tracks, index);
+                                  }
+                                },
+                                cells: [
+                                  _queueMenuCell(context, ref, track, track.title),
+                                  _queueMenuCell(context, ref, track, track.artist),
+                                  _queueMenuCell(context, ref, track, _formatDurationMs(track.durationMs)),
+                                ],
+                              );
+                            }),
                           );
                         },
                         loading: () => const Center(child: CircularProgressIndicator(color: Colors.greenAccent)),
