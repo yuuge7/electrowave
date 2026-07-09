@@ -6,9 +6,7 @@ flutter build linux --release
 
 # 2. Define our variables
 APP_NAME="Electrowave"
-# Note: "local_player" below is the name of your executable. 
-# Change it if you renamed your C++ binary!
-APP_EXEC="$(pwd)/build/linux/x64/release/bundle/local_player"
+APP_EXEC="$(pwd)/build/linux/x64/release/bundle/electrowave"
 ICON_PATH="$(pwd)/web/music.png"
 DESKTOP_FILE="$HOME/.local/share/applications/electrowave.desktop"
 

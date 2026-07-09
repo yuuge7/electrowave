@@ -1,6 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tray_manager/tray_manager.dart';
+import 'package:window_manager/window_manager.dart';
+import '../services/tray_service.dart';
 import '../../features/library/views/library_view.dart';
 import '../../features/playlists/views/playlists_view.dart';
 import '../../features/stats/views/stats_view.dart';
@@ -19,7 +23,7 @@ class MainShell extends ConsumerStatefulWidget {
   ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends ConsumerState<MainShell> {
+class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   int _selectedIndex = 0;
 
   final List<Widget> _screens = [
@@ -33,6 +37,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleHardwareKeys);
+    _initTray();
 
     // ADDED THIS BLOCK: Check for the import flag right after the shell draws
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -76,23 +81,103 @@ class _MainShellState extends ConsumerState<MainShell> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeys);
+    trayManager.removeListener(this);
     super.dispose();
+  }
+
+  // --- SYSTEM TRAY (hide-to-tray like Spotify) ---
+
+  Future<void> _initTray() async {
+    if (!Platform.isLinux && !Platform.isWindows && !Platform.isMacOS) return;
+    try {
+      await trayManager.setIcon(
+        Platform.isWindows ? 'assets/tray_icon.ico' : 'assets/tray_icon.png',
+      );
+      await trayManager.setContextMenu(Menu(items: [
+        MenuItem(key: 'show_window', label: 'Show Electrowave'),
+        MenuItem.separator(),
+        MenuItem(key: 'play_pause', label: 'Play / Pause'),
+        MenuItem(key: 'previous', label: 'Previous'),
+        MenuItem(key: 'next', label: 'Next'),
+        MenuItem.separator(),
+        MenuItem(key: 'quit', label: 'Quit'),
+      ]));
+      trayManager.addListener(this);
+      ref.read(trayReadyProvider.notifier).set(true);
+    } catch (e) {
+      // No tray available (e.g. missing appindicator) — keep the hide
+      // button hidden so the window can't become unreachable.
+      debugPrint('Tray unavailable: $e');
+    }
+  }
+
+  @override
+  void onTrayIconMouseDown() async {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    trayManager.popUpContextMenu();
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) async {
+    final player = ref.read(playerProvider);
+    final playbackController = ref.read(playbackControllerProvider);
+
+    switch (menuItem.key) {
+      case 'show_window':
+        await windowManager.show();
+        await windowManager.focus();
+      case 'play_pause':
+        player.state.playing ? player.pause() : player.play();
+      case 'previous':
+        playbackController.playPreviousTrack();
+      case 'next':
+        playbackController.playNextTrack();
+      case 'quit':
+        await trayManager.destroy();
+        await windowManager.destroy();
+    }
+  }
+
+  // --- KEYBOARD SHORTCUTS ---
+
+  bool _isTypingInTextField() {
+    final focusedContext = FocusManager.instance.primaryFocus?.context;
+    if (focusedContext == null) return false;
+    return focusedContext.findAncestorStateOfType<EditableTextState>() != null;
   }
 
   bool _handleHardwareKeys(KeyEvent event) {
     if (event is KeyDownEvent) {
       final player = ref.read(playerProvider);
       final playbackController = ref.read(playbackControllerProvider);
+      final ctrl = HardwareKeyboard.instance.isControlPressed;
 
       if (event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
         player.state.playing ? player.pause() : player.play();
-        return true; 
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.mediaTrackNext) {
         playbackController.playNextTrack();
         return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.mediaTrackPrevious) {
+        playbackController.playPreviousTrack();
+        return true;
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.space && !_isTypingInTextField()) {
+        player.state.playing ? player.pause() : player.play();
+        return true;
+      }
+      else if (ctrl && event.logicalKey == LogicalKeyboardKey.arrowRight && !_isTypingInTextField()) {
+        playbackController.playNextTrack();
+        return true;
+      }
+      else if (ctrl && event.logicalKey == LogicalKeyboardKey.arrowLeft && !_isTypingInTextField()) {
         playbackController.playPreviousTrack();
         return true;
       }

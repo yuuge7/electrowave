@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
 import 'shared/widgets/main_shell.dart';
 
@@ -51,6 +52,11 @@ final databaseProvider = Provider<AppDatabase>((ref) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Needed for hide-to-tray (show/hide/focus the native window)
+  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+  }
 
   // Intercept and apply the database before starting the app
   await applyPendingDatabaseImport();

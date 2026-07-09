@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
+import '../services/tray_service.dart';
 import '../../features/player/providers/player_provider.dart';
 
 class BottomPlayerBar extends ConsumerWidget {
@@ -253,9 +255,22 @@ class BottomPlayerBar extends ConsumerWidget {
                             );
                           },
                         ),
+
+                        // Hide to tray: window disappears, music keeps
+                        // playing, tray icon brings it back (like Spotify)
+                        Consumer(builder: (context, ref, _) {
+                          final trayReady = ref.watch(trayReadyProvider);
+                          if (!trayReady) return const SizedBox.shrink();
+                          return IconButton(
+                            tooltip: 'Hide to tray (keeps playing)',
+                            icon: const Icon(Icons.close_fullscreen, size: 20),
+                            color: Colors.grey,
+                            onPressed: () => windowManager.hide(),
+                          );
+                        }),
                       ],
                     ),
-                  ), 
+                  ),
                 ],
               ),
             ),

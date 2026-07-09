@@ -19,7 +19,7 @@ jobs:
       - name: Install Linux Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libmpv-dev alien rpm
+          sudo apt-get install -y clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libmpv-dev libayatana-appindicator3-dev alien rpm
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -71,7 +71,7 @@ jobs:
 
       - name: Package as Red Hat/Fedora Installer (.rpm)
         run: |
-          sudo alien --to-rpm --nodeps electrowave-linux-installer.deb
+          sudo alien --to-rpm --keep-version electrowave-linux-installer.deb
           mv electrowave-*.rpm electrowave-linux-installer.rpm
 
       - name: Upload Linux Artifacts (Temporary)
