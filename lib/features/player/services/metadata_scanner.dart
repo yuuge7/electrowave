@@ -5,7 +5,7 @@ import 'package:metadata_god/metadata_god.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:drift/drift.dart';
-import 'package:local_player/core/database/app_database.dart';
+import 'package:electrowave/core/database/app_database.dart';
 
 class MetadataScanner {
   final AppDatabase db;
