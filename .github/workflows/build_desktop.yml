@@ -102,6 +102,7 @@ jobs:
           pkgdesc="A beautiful local media player."
           arch=('x86_64')
           license=('custom')
+          options=('!debug' '!strip')
           depends=('gtk3' 'mpv' 'libayatana-appindicator')
           source=("electrowave-linux-build.tar.gz")
           sha256sums=('SKIP')
