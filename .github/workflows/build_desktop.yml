@@ -38,7 +38,6 @@ jobs:
           mkdir -p deb_pkg/DEBIAN
           
           cp -r build/linux/x64/release/bundle/* deb_pkg/opt/electrowave/
-          mv deb_pkg/opt/electrowave/local_player deb_pkg/opt/electrowave/electrowave
           cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/electrowave.png
           
           ln -s /opt/electrowave/electrowave deb_pkg/usr/bin/electrowave
