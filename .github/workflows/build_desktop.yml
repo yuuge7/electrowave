@@ -13,8 +13,20 @@ jobs:
       - name: Clone the repository
         uses: actions/checkout@v4
 
+      # 1. Setup the cache for APT packages
+      - name: Cache APT Packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-cache
+
+      # 2. Configure APT to keep downloads, then install dependencies
       - name: Install Linux Dependencies
         run: |
+          # Prevent Ubuntu from auto-deleting downloaded packages
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
+          echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/keep-cache
+          
           sudo apt-get update
           sudo apt-get install -y clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libmpv-dev libayatana-appindicator3-dev alien rpm
 
@@ -71,6 +83,49 @@ jobs:
           sudo alien --to-rpm --keep-version electrowave-linux-installer.deb
           mv electrowave-*.rpm electrowave-linux-installer.rpm
 
+      - name: Package for Arch Linux / CachyOS (.pkg.tar.zst)
+        run: |
+          # 1. Compress the already-compiled Linux files into a tarball
+          cd deb_pkg
+          tar -czvf ../electrowave-linux-build.tar.gz opt usr
+          cd ..
+          
+          # 2. Setup the Arch build directory
+          mkdir arch_build
+          mv electrowave-linux-build.tar.gz arch_build/
+          
+          # 3. Create the Arch PKGBUILD file
+          cat <<EOF > arch_build/PKGBUILD
+          pkgname=electrowave
+          pkgver=1.0.0
+          pkgrel=1
+          pkgdesc="A beautiful local media player."
+          arch=('x86_64')
+          license=('custom')
+          depends=('gtk3' 'mpv' 'libayatana-appindicator')
+          source=("electrowave-linux-build.tar.gz")
+          sha256sums=('SKIP')
+          
+          package() {
+              # makepkg automatically extracts the tarball into \$srcdir
+              cp -r "\$srcdir/opt" "\$pkgdir/"
+              cp -r "\$srcdir/usr" "\$pkgdir/"
+          }
+          EOF
+          
+          # 4. Use a temporary Arch Linux Docker container to build the package
+          docker run --rm -v ${{ github.workspace }}/arch_build:/build archlinux /bin/bash -c "
+            pacman -Sy --noconfirm base-devel
+            useradd -m builder
+            chown -R builder:builder /build
+            cd /build
+            # Run makepkg with -d (nodeps) so it doesn't fail checking for mpv inside the minimal container
+            su builder -c 'makepkg -cfd'
+          "
+          
+          # 5. Move the finished package out for upload with the new, shorter name
+          mv arch_build/*.pkg.tar.zst ./electrowave.pkg.tar.zst
+
       - name: Upload Linux Artifacts (Internal Testing)
         uses: actions/upload-artifact@v4
         with:
@@ -78,6 +133,7 @@ jobs:
           path: |
             electrowave-linux-installer.deb
             electrowave-linux-installer.rpm
+            electrowave.pkg.tar.zst
 
   # --- WINDOWS TEST BUILD ---
   build-windows:
