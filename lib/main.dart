@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
+import 'shared/services/linux_desktop_integration.dart';
 import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
 
@@ -64,6 +65,9 @@ void main() async {
       exit(0);
     }
   }
+
+  // Install .desktop file + icon so the taskbar/launcher shows our icon
+  await LinuxDesktopIntegration.ensureInstalled();
 
   // Intercept and apply the database before starting the app
   await applyPendingDatabaseImport();

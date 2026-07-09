@@ -52,21 +52,25 @@ jobs:
           mkdir -p deb_pkg/DEBIAN
           
           cp -r build/linux/x64/release/bundle/* deb_pkg/opt/electrowave/
-          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/electrowave.png
-          
+          # Icon + .desktop must be named after APPLICATION_ID from
+          # linux/CMakeLists.txt so desktop environments can map the running
+          # window (app_id/WM_CLASS) to them — else taskbar icon is generic.
+          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/com.example.electrowave.png
+
           ln -s /opt/electrowave/electrowave deb_pkg/usr/bin/electrowave
-          
-          cat <<EOF > deb_pkg/usr/share/applications/electrowave.desktop
+
+          cat <<EOF > deb_pkg/usr/share/applications/com.example.electrowave.desktop
           [Desktop Entry]
           Version=1.0
           Name=Electrowave
           GenericName=Media Player
           Comment=Play local music files
           Exec=/opt/electrowave/electrowave
-          Icon=electrowave
+          Icon=com.example.electrowave
           Terminal=false
           Type=Application
           Categories=AudioVideo;Audio;Player;
+          StartupWMClass=com.example.electrowave
           EOF
           
           cat <<EOF > deb_pkg/DEBIAN/control
@@ -101,6 +105,11 @@ jobs:
           pkgdesc="A beautiful local media player."
           arch=('x86_64')
           license=('custom')
+          # Prebuilt Flutter bundle: no debug symbols to extract, and
+          # stripping could corrupt the AOT snapshot. Without !debug makepkg
+          # also emits a second electrowave-debug package, which breaks the
+          # single-file mv below.
+          options=('!debug' '!strip')
           depends=('gtk3' 'mpv' 'libayatana-appindicator')
           source=("electrowave-linux-build.tar.gz")
           sha256sums=('SKIP')
