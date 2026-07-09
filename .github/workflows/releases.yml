@@ -128,7 +128,10 @@ jobs:
             su builder -c 'makepkg -cfd'
           "
           
-          mv arch_build/*.pkg.tar.zst ./electrowave.pkg.tar.zst
+          # Container's chown left arch_build owned by an in-container UID;
+          # mv needs sudo, then chown back so the upload step can read it.
+          sudo mv arch_build/*.pkg.tar.zst ./electrowave.pkg.tar.zst
+          sudo chown "$(id -u):$(id -g)" ./electrowave.pkg.tar.zst
 
       - name: Upload Linux Artifacts (Temporary)
         uses: actions/upload-artifact@v4
