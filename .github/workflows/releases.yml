@@ -1,12 +1,15 @@
-name: Test Desktop Builds
+name: Publish Production Release
 
 on:
   push:
-    branches: [ "testing" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write 
+
 jobs:
-  # --- LINUX TEST BUILD ---
+  # --- LINUX PRODUCTION BUILD ---
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -72,15 +75,15 @@ jobs:
           sudo alien --to-rpm --nodeps electrowave-linux-installer.deb
           mv electrowave-*.rpm electrowave-linux-installer.rpm
 
-      - name: Upload Linux Artifacts (Internal Testing)
+      - name: Upload Linux Artifacts (Temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: electrowave-linux-testing
+          name: electrowave-linux-release-files
           path: |
             electrowave-linux-installer.deb
             electrowave-linux-installer.rpm
 
-  # --- WINDOWS TEST BUILD ---
+  # --- WINDOWS PRODUCTION BUILD ---
   build-windows:
     runs-on: windows-latest
     steps:
@@ -101,8 +104,37 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
-      - name: Upload Windows Artifact
+      - name: Zip Windows Release
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath electrowave-windows-x64.zip
+
+      - name: Upload Windows Artifact (Temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: electrowave-windows-testing
-          path: build\windows\x64\runner\Release\
+          name: electrowave-windows-release-files
+          path: electrowave-windows-x64.zip
+
+  # --- CREATE OFFICIAL GITHUB RELEASE ---
+  publish-release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux Installers
+        uses: actions/download-artifact@v4
+        with:
+          name: electrowave-linux-release-files
+          path: final_assets
+
+      - name: Download Windows Zip
+        uses: actions/download-artifact@v4
+        with:
+          name: electrowave-windows-release-files
+          path: final_assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Electrowave Update v1.0.${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: final_assets/*
