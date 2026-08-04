@@ -15,6 +15,10 @@ final scrobblingServiceProvider = Provider<void>((ref) {
     final currentTrack = ref.read(currentTrackProvider);
     if (currentTrack == null) return;
 
+    // A restored session reopens the last track already deep into it while
+    // paused — that must not count as a play.
+    if (!player.state.playing) return;
+
     // Reset the tracker if the position drops near zero 
     if (position.inSeconds < 1) {
       lastScrobbledTrackId = null;

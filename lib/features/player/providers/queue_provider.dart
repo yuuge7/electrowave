@@ -107,6 +107,21 @@ class QueueNotifier extends Notifier<QueueState> {
   void reset() {
     state = const QueueState();
   }
+
+  /// Puts back a queue saved in a previous session (see [SessionController]).
+  void restore({
+    required List<db.Track> context,
+    required int contextIndex,
+    required List<db.Track> manualQueue,
+    required bool playingFromManualQueue,
+  }) {
+    state = QueueState(
+      context: List.unmodifiable(context),
+      contextIndex: contextIndex,
+      manualQueue: manualQueue,
+      playingFromManualQueue: playingFromManualQueue,
+    );
+  }
 }
 
 final queueProvider =
@@ -119,6 +134,7 @@ class QueuePanelVisibleNotifier extends Notifier<bool> {
 
   void toggle() => state = !state;
   void close() => state = false;
+  void set(bool visible) => state = visible;
 }
 
 final queuePanelVisibleProvider =

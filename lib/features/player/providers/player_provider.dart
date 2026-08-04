@@ -14,10 +14,12 @@ class RepeatModeNotifier extends Notifier<PlaybackRepeatMode> {
   PlaybackRepeatMode build() => PlaybackRepeatMode.off;
   
   void cycle() {
-    state = state == PlaybackRepeatMode.off ? PlaybackRepeatMode.all 
-          : state == PlaybackRepeatMode.all ? PlaybackRepeatMode.one 
+    state = state == PlaybackRepeatMode.off ? PlaybackRepeatMode.all
+          : state == PlaybackRepeatMode.all ? PlaybackRepeatMode.one
           : PlaybackRepeatMode.off;
   }
+
+  void set(PlaybackRepeatMode mode) => state = mode;
 }
 final repeatModeProvider = NotifierProvider<RepeatModeNotifier, PlaybackRepeatMode>(RepeatModeNotifier.new);
 
@@ -26,6 +28,8 @@ class ShuffleNotifier extends Notifier<bool> {
   bool build() => false;
   
   void toggle() => state = !state;
+
+  void set(bool value) => state = value;
 }
 final shuffleProvider = NotifierProvider<ShuffleNotifier, bool>(ShuffleNotifier.new);
 

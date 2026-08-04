@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+import '../providers/navigation_provider.dart';
 import '../services/single_instance_service.dart';
 import '../services/tray_service.dart';
 import '../../features/library/views/library_view.dart';
@@ -12,6 +15,7 @@ import '../../features/stats/views/stats_view.dart';
 import '../../features/settings/views/settings_view.dart';
 import '../../features/player/providers/player_provider.dart';
 import '../../features/player/providers/queue_provider.dart';
+import '../../features/player/providers/session_provider.dart';
 import '../../features/player/services/scrobbling_service.dart';
 import 'bottom_player_bar.dart';
 import 'queue_panel.dart';
@@ -27,7 +31,7 @@ class MainShell extends ConsumerStatefulWidget {
 }
 
 class _MainShellState extends ConsumerState<MainShell> with TrayListener {
-  int _selectedIndex = 0;
+  AppLifecycleListener? _lifecycleListener;
 
   final List<Widget> _screens = [
     const LibraryView(),
@@ -41,11 +45,12 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleHardwareKeys);
     _initTray();
+    _initSessionPersistence();
 
     // ADDED THIS BLOCK: Check for the import flag right after the shell draws
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       bool justImported = await checkAndConsumeImportFlag();
-      
+
       if (justImported && mounted) {
         showDialog(
           context: context,
@@ -68,9 +73,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
                   Navigator.pop(context);
                   
                   // 2. Switch the active tab to the Settings view (Index 3)
-                  setState(() {
-                    _selectedIndex = 3;
-                  });
+                  ref.read(navIndexProvider.notifier).set(3);
                 },
                 child: const Text('New Location (Repair Links)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
               ),
@@ -85,7 +88,30 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeys);
     trayManager.removeListener(this);
+    _lifecycleListener?.dispose();
     super.dispose();
+  }
+
+  // --- SESSION PERSISTENCE (resume where the user left off) ---
+
+  void _initSessionPersistence() {
+    final session = ref.read(sessionControllerProvider);
+
+    // Put the previous session back: track, position, queue, playlist, tab.
+    unawaited(session.restore());
+
+    // Closing the window (the X button) asks the app to exit — write the
+    // session before that happens. Losing focus / hiding to tray are cheap
+    // extra checkpoints; flush() is a no-op when nothing changed.
+    _lifecycleListener = AppLifecycleListener(
+      onExitRequested: () async {
+        await session.flush();
+        return AppExitResponse.exit;
+      },
+      onInactive: () => unawaited(session.flush()),
+      onHide: () => unawaited(session.flush()),
+      onPause: () => unawaited(session.flush()),
+    );
   }
 
   // --- SYSTEM TRAY (hide-to-tray like Spotify) ---
@@ -141,6 +167,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
       case 'next':
         playbackController.playNextTrack();
       case 'quit':
+        await ref.read(sessionControllerProvider).flush();
         await SingleInstanceService.dispose();
         await trayManager.destroy();
         await windowManager.destroy();
@@ -192,6 +219,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   @override
   Widget build(BuildContext context) {
     ref.watch(scrobblingServiceProvider);
+    final selectedIndex = ref.watch(navIndexProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
@@ -201,8 +229,9 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
             child: Row(
               children: [
                 NavigationRail(
-                  selectedIndex: _selectedIndex,
-                  onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+                  selectedIndex: selectedIndex,
+                  onDestinationSelected: (index) =>
+                      ref.read(navIndexProvider.notifier).set(index),
                   backgroundColor: const Color(0xFF181818),
                   labelType: NavigationRailLabelType.all, 
                   selectedIconTheme: const IconThemeData(color: Colors.greenAccent),
@@ -230,7 +259,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
                 ),
                 
                 Expanded(
-                  child: _screens[_selectedIndex],
+                  child: _screens[selectedIndex],
                 ),
 
                 // Spotify-style queue side panel

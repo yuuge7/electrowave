@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
+import 'core/session/session_store.dart';
 import 'shared/services/linux_desktop_integration.dart';
 import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
@@ -35,6 +36,10 @@ Future<void> applyPendingDatabaseImport() async {
 
       await pendingFile.copy(dbFile.path);
       await pendingFile.delete();
+
+      // The saved session points at track IDs from the *old* database, so it
+      // would restore the wrong songs against the imported library.
+      await SessionStore.clear();
 
       await File(p.join(appDir.path, 'import_success.flag')).create();
       
