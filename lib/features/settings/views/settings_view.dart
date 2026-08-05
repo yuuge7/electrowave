@@ -517,7 +517,14 @@ class SettingsView extends ConsumerWidget {
             tileColor: colors.surface,
             leading: Icon(Icons.info_outline, color: colors.textPrimary),
             title: Text('Electrowave', style: TextStyle(color: colors.textPrimary)),
-            subtitle: Text('Version 1.0.0', style: TextStyle(color: colors.textFaint)),
+            subtitle: Text(
+              switch (ref.watch(appVersionProvider)) {
+                AsyncData(:final value) => 'Version $value',
+                AsyncError() => 'Version unknown',
+                _ => 'Version…',
+              },
+              style: TextStyle(color: colors.textFaint),
+            ),
           ),
         ],
       ),

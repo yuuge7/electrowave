@@ -1,9 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../player/services/audio_engine.dart';
 import '../services/settings_persistence.dart';
+
+/// The version baked into the build, so About can never drift from the
+/// released binary the way a hardcoded string does. Falls back to the build
+/// number only when it adds information.
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  if (info.version.isEmpty) return 'unknown';
+  return info.buildNumber.isEmpty
+      ? info.version
+      : '${info.version} (build ${info.buildNumber})';
+});
 
 final settingsPersistenceProvider =
     Provider<SettingsPersistence>((ref) => SettingsPersistence());
