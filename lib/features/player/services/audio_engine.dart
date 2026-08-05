@@ -82,36 +82,103 @@ class AudioEngine {
     } catch (_) {}
   }
 
-  /// Rebuild the `af` chain: time-stretcher (only off 1.0×, so normal-speed
-  /// playback is bit-for-bit untouched) followed by the EQ bands. An empty
-  /// chain clears all filters, so a disabled/flat EQ costs nothing.
+  /// The chain mpv last accepted, so a rejected one can be rolled back instead
+  /// of leaving the audio output dead.
+  String _appliedChain = '';
+
+  /// Rebuild the `af` chain. An empty chain clears all filters, so a disabled
+  /// or flat EQ costs nothing.
+  ///
+  /// Two ordering rules matter, and getting either wrong silently kills
+  /// playback rather than just the effect:
+  ///
+  /// 1. The EQ goes in as **one** `lavfi` graph, not one bridged filter per
+  ///    band. Every entry in `af` is a separate node mpv has to negotiate
+  ///    formats across; five bands plus a stretcher is six nodes, and if that
+  ///    reinitialization fails mpv disables audio entirely — on an audio-only
+  ///    file that looks like a track frozen at 0:00.
+  /// 2. The time-stretcher is **last**. It is the filter that consumes the
+  ///    speed change, so anything after it would be handed a stream whose
+  ///    rate no longer matches what mpv negotiated.
   Future<void> _applyFilterChain() async {
     final native = _native;
     if (native == null) return;
     await _probeStretchFilter(native);
 
-    final settings = _settings;
-    final filters = <String>[
-      if (_desiredRate != 1.0 && _stretchFilter != null) _stretchFilter!,
-    ];
+    final useStretcher = _desiredRate != 1.0 && _stretchFilter != null;
+    final chain = buildFilterChain(
+      settings: _settings,
+      stretchFilter: useStretcher ? _stretchFilter : null,
+    );
 
-    if (settings != null && settings.eqEnabled) {
-      for (var i = 0; i < kEqBandFrequencies.length; i++) {
-        final gain = i < settings.eqGainsDb.length ? settings.eqGainsDb[i] : 0.0;
-        // Skip inaudible bands to keep the chain short.
-        if (gain.abs() < 0.1) continue;
-        filters.add(
-          'equalizer=f=${kEqBandFrequencies[i]}:t=o:w=2'
-          ':g=${gain.toStringAsFixed(1)}',
-        );
-      }
+    if (await _setChain(native, chain, wantsStretcher: useStretcher)) return;
+
+    // mpv refused the chain. Fall back to the EQ alone and hand speed back to
+    // mpv's own (worse, but working) pitch correction rather than leaving the
+    // player with no audio filter graph at all.
+    debugPrint('[electrowave] af chain rejected: $chain');
+    final eqOnly = buildFilterChain(settings: _settings, stretchFilter: null);
+    if (eqOnly != chain &&
+        await _setChain(native, eqOnly, wantsStretcher: false)) {
+      return;
     }
 
+    // Even that failed: clear the chain so playback keeps working unfiltered.
+    debugPrint('[electrowave] falling back to an empty af chain');
+    await _setChain(native, '', wantsStretcher: false);
+  }
+
+  /// Sets `af` and verifies mpv took it — [NativePlayer.setProperty] discards
+  /// libmpv's return code, so the chain has to be read back.
+  Future<bool> _setChain(
+    NativePlayer native,
+    String chain, {
+    required bool wantsStretcher,
+  }) async {
     try {
-      await native.setProperty('af', filters.join(','));
+      // Exactly one stretcher in the chain: with correction left on, mpv
+      // inserts its own on top of ours and the two fight over the speed.
+      await native.setProperty(
+          'audio-pitch-correction', wantsStretcher ? 'no' : 'yes');
+      await native.setProperty('af', chain);
+
+      final applied = await native.getProperty('af');
+      if (!_chainApplied(chain, applied)) return false;
+
+      _appliedChain = chain;
+      return true;
     } catch (_) {
-      // An unsupported filter must not take playback down.
+      return false;
     }
+  }
+
+  /// mpv normalizes what it reports back (`lavfi.graph=...`, added defaults),
+  /// so this checks that every filter asked for is present rather than
+  /// comparing strings.
+  bool _chainApplied(String requested, String applied) {
+    if (requested.isEmpty) return true;
+    for (final name in _filterNames(requested)) {
+      if (!applied.contains(name)) return false;
+    }
+    return true;
+  }
+
+  Iterable<String> _filterNames(String chain) sync* {
+    if (chain.contains('lavfi')) yield 'equalizer';
+    final stretch = _stretchFilter;
+    if (stretch != null && chain.contains(stretch.split('=').first)) {
+      yield stretch.split('=').first;
+    }
+  }
+
+  /// Re-asserts the chain mpv last accepted. Opening a file rebuilds the audio
+  /// output, and a chain that was cleared by a failed apply would otherwise
+  /// stay gone for the rest of the session.
+  Future<void> reapplyFilterChain() async {
+    final native = _native;
+    if (native == null) return;
+    if (_appliedChain.isEmpty && _desiredRate == 1.0) return;
+    await _applyFilterChain();
   }
 
   /// Playback speed. The filter chain is rebuilt *before* the speed changes so
@@ -125,8 +192,9 @@ class AudioEngine {
 
   /// mpv resets speed on every new file; call this after opening a track.
   Future<void> reapplyRate() async {
-    if (_desiredRate == 1.0) return;
-    await player.setRate(_desiredRate);
+    if (_desiredRate == 1.0 && _appliedChain.isEmpty) return;
+    await reapplyFilterChain();
+    if (_desiredRate != 1.0) await player.setRate(_desiredRate);
   }
 
   /// Apply EQ + ReplayGain from [settings].
@@ -182,6 +250,36 @@ class AudioEngine {
     _inactivityTimer?.cancel();
     _inactivityTimer = null;
   }
+}
+
+/// Builds the mpv `af` string for [settings] and an optional [stretchFilter].
+///
+/// The EQ bands are wrapped in a single `lavfi=[...]` graph: the brackets keep
+/// ffmpeg's comma-separated graph syntax from being read as mpv's own filter
+/// separator, and the whole equalizer ends up as one node in mpv's chain
+/// instead of one per band. The stretcher always comes last so it is the
+/// filter that absorbs the speed change.
+String buildFilterChain({
+  required AppSettings? settings,
+  required String? stretchFilter,
+}) {
+  final parts = <String>[];
+
+  if (settings != null && settings.eqEnabled) {
+    final bands = <String>[];
+    for (var i = 0; i < kEqBandFrequencies.length; i++) {
+      final gain = i < settings.eqGainsDb.length ? settings.eqGainsDb[i] : 0.0;
+      // Skip inaudible bands to keep the graph short.
+      if (gain.abs() < 0.1) continue;
+      bands.add('equalizer=f=${kEqBandFrequencies[i]}:t=o:w=2'
+          ':g=${gain.toStringAsFixed(1)}');
+    }
+    if (bands.isNotEmpty) parts.add('lavfi=[${bands.join(',')}]');
+  }
+
+  if (stretchFilter != null) parts.add(stretchFilter);
+
+  return parts.join(',');
 }
 
 final audioEngineProvider = Provider<AudioEngine>((ref) {

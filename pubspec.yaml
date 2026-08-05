@@ -43,7 +43,9 @@ dependencies:
   sqlite3_flutter_libs: ^0.6.0+eol
   path_provider: ^2.1.6
   path: ^1.9.1
-  metadata_god: ^1.1.0
+  # Pure-Dart tag reader/writer. Replaces metadata_god, whose Windows build
+  # compiles a Rust crate through cargokit and needs a cargo toolchain.
+  audio_metadata_reader: ^1.6.0
   file_picker: ^8.0.0
   data_table_2: ^2.7.2
   intl: ^0.20.3
@@ -111,9 +113,6 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
-
-dependency_overrides:
-  flutter_rust_bridge: 2.11.1
 
 flutter_launcher_icons:
   android: true

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:metadata_god/metadata_god.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
@@ -81,9 +80,6 @@ void main() async {
 
   // Initialize native media playback engine
   MediaKit.ensureInitialized();
-  
-  // Initialize Rust-based metadata extraction
-  MetadataGod.initialize();
 
   runApp(
     const ProviderScope(
