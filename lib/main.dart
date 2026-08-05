@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
 import 'core/session/session_store.dart';
+import 'features/settings/providers/settings_provider.dart';
+import 'shared/theme/app_theme.dart';
 import 'shared/services/linux_desktop_integration.dart';
 import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
@@ -90,22 +92,23 @@ void main() async {
   );
 }
 
-class LocalPlayerApp extends StatelessWidget {
+class LocalPlayerApp extends ConsumerWidget {
   const LocalPlayerApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(
+      settingsControllerProvider.select((settings) => settings.themeMode),
+    );
+
     return MaterialApp(
       title: 'Electrowave',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        primaryColor: Colors.greenAccent,
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
+      themeMode: toFlutterThemeMode(themeMode),
       // This now correctly points to the MainShell layout
-      home: const MainShell(), 
+      home: const MainShell(),
     );
   }
 }

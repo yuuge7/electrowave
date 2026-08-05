@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
+import '../../../core/database/app_database.dart' show TrackListeningStat;
 import '../../../main.dart';
 
 enum StatsFilter { monthly, yearly, allTime }
@@ -50,6 +51,41 @@ class WrappedData {
   final List<TopItem> topArtists;
   WrappedData({required this.totalDurationMs, required this.topTracks, required this.topArtists});
 }
+
+/// Half-open date range for the selected filter: [from, to).
+///
+/// Exclusive on the right so a play at 23:59:59.500 on the last day of a month
+/// still lands in that month.
+({DateTime? from, DateTime? to}) statsRange(StatsState state) {
+  return switch (state.filter) {
+    StatsFilter.monthly => (
+        from: DateTime(state.year, state.month, 1),
+        to: DateTime(state.year, state.month + 1, 1),
+      ),
+    StatsFilter.yearly => (
+        from: DateTime(state.year, 1, 1),
+        to: DateTime(state.year + 1, 1, 1),
+      ),
+    StatsFilter.allTime => (from: null, to: null),
+  };
+}
+
+/// Tracks ranked by audio that actually played, not by play count — a track
+/// left on repeat outranks one started and skipped many times.
+final listeningTimeStatsProvider =
+    StreamProvider<List<TrackListeningStat>>((ref) {
+  final db = ref.watch(databaseProvider);
+  final range = statsRange(ref.watch(statsStateProvider));
+  return db.watchTracksByListeningTime(from: range.from, to: range.to);
+});
+
+/// Measured counterpart to [WrappedData.totalDurationMs], which estimates from
+/// play counts instead.
+final totalListenedMsProvider = StreamProvider<int>((ref) {
+  final db = ref.watch(databaseProvider);
+  final range = statsRange(ref.watch(statsStateProvider));
+  return db.watchTotalListenedMs(from: range.from, to: range.to);
+});
 
 // --- THE SQL AGGREGATION PROVIDER ---
 final wrappedStatsProvider = FutureProvider<WrappedData>((ref) async {

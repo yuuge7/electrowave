@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 import '../providers/navigation_provider.dart';
+import '../theme/app_theme.dart';
 import '../services/single_instance_service.dart';
 import '../services/tray_service.dart';
 import '../../features/library/views/library_view.dart';
@@ -16,6 +17,7 @@ import '../../features/settings/views/settings_view.dart';
 import '../../features/player/providers/player_provider.dart';
 import '../../features/player/providers/queue_provider.dart';
 import '../../features/player/providers/session_provider.dart';
+import '../../features/player/services/audio_engine.dart';
 import '../../features/player/services/scrobbling_service.dart';
 import 'bottom_player_bar.dart';
 import 'queue_panel.dart';
@@ -56,16 +58,18 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF181818),
-            title: const Text('Import Successful', style: TextStyle(color: Colors.greenAccent)),
-            content: const Text(
+            backgroundColor: context.colors.surface,
+            title: Text('Import Successful',
+                style: TextStyle(color: context.colors.accent)),
+            content: Text(
               'Your database has been loaded!\n\nDid you move your music to a new folder or switch operating systems? (If songs won\'t play, you need to repair the links).',
-              style: TextStyle(color: Colors.white70),
+              style: TextStyle(color: context.colors.textSecondary),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Same Location (Skip)', style: TextStyle(color: Colors.grey)),
+                child: Text('Same Location (Skip)',
+                    style: TextStyle(color: context.colors.textFaint)),
               ),
               TextButton(
                 onPressed: () {
@@ -75,7 +79,10 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
                   // 2. Switch the active tab to the Settings view (Index 3)
                   ref.read(navIndexProvider.notifier).set(3);
                 },
-                child: const Text('New Location (Repair Links)', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                child: Text('New Location (Repair Links)',
+                    style: TextStyle(
+                        color: context.colors.accent,
+                        fontWeight: FontWeight.bold)),
               ),
             ],
           )
@@ -155,6 +162,8 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   void onTrayMenuItemClick(MenuItem menuItem) async {
     final player = ref.read(playerProvider);
     final playbackController = ref.read(playbackControllerProvider);
+    // A tray control is the user being present: push back the auto-stop.
+    ref.read(audioEngineProvider).noteUserActivity();
 
     switch (menuItem.key) {
       case 'show_window':
@@ -187,6 +196,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
       final player = ref.read(playerProvider);
       final playbackController = ref.read(playbackControllerProvider);
       final ctrl = HardwareKeyboard.instance.isControlPressed;
+      ref.read(audioEngineProvider).noteUserActivity();
 
       if (event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
         player.state.playing ? player.pause() : player.play();
@@ -221,8 +231,10 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
     ref.watch(scrobblingServiceProvider);
     final selectedIndex = ref.watch(navIndexProvider);
 
+    final colors = context.colors;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: colors.background,
       body: Column(
         children: [
           Expanded(
@@ -232,12 +244,12 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
                   selectedIndex: selectedIndex,
                   onDestinationSelected: (index) =>
                       ref.read(navIndexProvider.notifier).set(index),
-                  backgroundColor: const Color(0xFF181818),
-                  labelType: NavigationRailLabelType.all, 
-                  selectedIconTheme: const IconThemeData(color: Colors.greenAccent),
-                  unselectedIconTheme: const IconThemeData(color: Colors.grey),
-                  selectedLabelTextStyle: const TextStyle(color: Colors.greenAccent),
-                  unselectedLabelTextStyle: const TextStyle(color: Colors.grey),
+                  backgroundColor: colors.surface,
+                  labelType: NavigationRailLabelType.all,
+                  selectedIconTheme: IconThemeData(color: colors.accent),
+                  unselectedIconTheme: IconThemeData(color: colors.textFaint),
+                  selectedLabelTextStyle: TextStyle(color: colors.accent),
+                  unselectedLabelTextStyle: TextStyle(color: colors.textFaint),
                   destinations: const [
                     NavigationRailDestination(
                       icon: Icon(Icons.library_music),

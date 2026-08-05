@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import '../../../core/database/app_database.dart' as db;
+import '../services/audio_engine.dart';
 import 'queue_provider.dart';
+import 'sleep_timer_provider.dart';
 
 // --- 1. REPEAT AND SHUFFLE STATES ---
 
@@ -57,6 +60,9 @@ class PlaybackController {
   void _play(db.Track track) {
     ref.read(currentTrackProvider.notifier).setTrack(track);
     ref.read(playerProvider).open(Media(track.filePath));
+    // mpv resets speed on every new file, so the chosen rate has to be pushed
+    // back after each open.
+    unawaited(ref.read(audioEngineProvider).reapplyRate());
   }
 
   /// Entry point for the UI: the user clicked the track at [index] inside
@@ -183,6 +189,13 @@ final playerProvider = Provider<Player>((ref) {
   player.stream.completed.listen((completed) {
     if (completed) {
       Future.microtask(() {
+        // Sleep timer in "end of current track" mode: stop here instead of
+        // advancing.
+        final sleepTimer = ref.read(sleepTimerProvider);
+        if (sleepTimer != null && sleepTimer.endOfTrack) {
+          ref.read(sleepTimerProvider.notifier).fireNow();
+          return;
+        }
         ref.read(playbackControllerProvider).playNextTrack(fromCompletion: true);
       });
     }

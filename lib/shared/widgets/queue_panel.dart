@@ -4,13 +4,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/player/providers/player_provider.dart';
 import '../../features/player/providers/queue_provider.dart';
 import '../../core/database/app_database.dart' as db;
+import '../theme/app_theme.dart';
 
 /// Spotify-style queue side panel: now playing, the manual "Next in queue"
 /// section, then the upcoming tracks from the current playback context.
 class QueuePanel extends ConsumerWidget {
   const QueuePanel({super.key});
 
-  Widget _sectionHeader(String text, {Widget? trailing}) {
+  Widget _sectionHeader(
+    String text,
+    ElectrowaveColors colors, {
+    Widget? trailing,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 8, 4),
       child: Row(
@@ -18,8 +23,8 @@ class QueuePanel extends ConsumerWidget {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: colors.textPrimary,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
@@ -32,11 +37,15 @@ class QueuePanel extends ConsumerWidget {
   }
 
   Widget _trackTile(
-    db.Track track, {
+    db.Track track,
+    ElectrowaveColors colors, {
     bool highlighted = false,
     VoidCallback? onTap,
     Widget? trailing,
   }) {
+    final placeholder =
+        Icon(Icons.music_note, color: colors.textFaint, size: 18);
+
     return ListTile(
       dense: true,
       onTap: onTap,
@@ -44,7 +53,7 @@ class QueuePanel extends ConsumerWidget {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: Colors.grey.shade900,
+          color: colors.surfaceAlt,
           borderRadius: BorderRadius.circular(6),
         ),
         clipBehavior: Clip.antiAlias,
@@ -52,17 +61,17 @@ class QueuePanel extends ConsumerWidget {
             ? Image.file(
                 File(track.coverArtPath!),
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const Icon(Icons.music_note, color: Colors.grey, size: 18),
+                cacheWidth: 96,
+                errorBuilder: (context, error, stackTrace) => placeholder,
               )
-            : const Icon(Icons.music_note, color: Colors.grey, size: 18),
+            : placeholder,
       ),
       title: Text(
         track.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: highlighted ? Colors.greenAccent : Colors.white70,
+          color: highlighted ? colors.accent : colors.textSecondary,
           fontWeight: highlighted ? FontWeight.bold : FontWeight.normal,
           fontSize: 13,
         ),
@@ -71,7 +80,7 @@ class QueuePanel extends ConsumerWidget {
         track.artist,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Colors.grey, fontSize: 11),
+        style: TextStyle(color: colors.textFaint, fontSize: 11),
       ),
       trailing: trailing,
     );
@@ -83,12 +92,13 @@ class QueuePanel extends ConsumerWidget {
     final currentTrack = ref.watch(currentTrackProvider);
     final controller = ref.read(playbackControllerProvider);
     final upcoming = queue.upcomingFromContext;
+    final colors = context.colors;
 
     return Container(
       width: 320,
-      decoration: const BoxDecoration(
-        color: Color(0xFF181818),
-        border: Border(left: BorderSide(color: Colors.white10)),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border(left: BorderSide(color: colors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -97,11 +107,11 @@ class QueuePanel extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Queue',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: colors.textPrimary,
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
                     ),
@@ -109,7 +119,7 @@ class QueuePanel extends ConsumerWidget {
                 ),
                 IconButton(
                   tooltip: 'Close',
-                  icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                  icon: Icon(Icons.close, color: colors.textFaint, size: 20),
                   onPressed: () =>
                       ref.read(queuePanelVisibleProvider.notifier).close(),
                 ),
@@ -120,42 +130,69 @@ class QueuePanel extends ConsumerWidget {
             child: ListView(
               children: [
                 if (currentTrack != null) ...[
-                  _sectionHeader('Now playing'),
-                  _trackTile(currentTrack, highlighted: true),
+                  _sectionHeader('Now playing', colors),
+                  _trackTile(currentTrack, colors, highlighted: true),
                 ],
                 if (queue.manualQueue.isNotEmpty) ...[
                   _sectionHeader(
                     'Next in queue',
+                    colors,
                     trailing: TextButton(
                       onPressed: () =>
                           ref.read(queueProvider.notifier).clearQueue(),
-                      child: const Text(
+                      child: Text(
                         'Clear',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                        style:
+                            TextStyle(color: colors.textFaint, fontSize: 12),
                       ),
                     ),
                   ),
-                  ...queue.manualQueue.asMap().entries.map(
-                        (entry) => _trackTile(
-                          entry.value,
-                          onTap: () =>
-                              controller.playQueuedTrackNow(entry.value),
-                          trailing: IconButton(
-                            tooltip: 'Remove from queue',
-                            icon: const Icon(Icons.close,
-                                color: Colors.grey, size: 16),
-                            onPressed: () => ref
-                                .read(queueProvider.notifier)
-                                .removeFromQueue(entry.key),
+                  // Drag to reorder what plays next.
+                  ReorderableListView(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    buildDefaultDragHandles: false,
+                    // onReorderItem hands over the index already adjusted for
+                    // the removed item, which is what reorderQueue expects.
+                    onReorderItem: (oldIndex, newIndex) => ref
+                        .read(queueProvider.notifier)
+                        .reorderQueue(oldIndex, newIndex),
+                    children: [
+                      for (final entry in queue.manualQueue.asMap().entries)
+                        ReorderableDragStartListener(
+                          key: ValueKey('queue-${entry.key}-${entry.value.id}'),
+                          index: entry.key,
+                          child: _trackTile(
+                            entry.value,
+                            colors,
+                            onTap: () =>
+                                controller.playQueuedTrackNow(entry.value),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.drag_handle,
+                                    color: colors.textFaint, size: 16),
+                                IconButton(
+                                  tooltip: 'Remove from queue',
+                                  icon: Icon(Icons.close,
+                                      color: colors.textFaint, size: 16),
+                                  onPressed: () => ref
+                                      .read(queueProvider.notifier)
+                                      .removeFromQueue(entry.key),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
+                    ],
+                  ),
                 ],
                 if (upcoming.isNotEmpty) ...[
-                  _sectionHeader('Next up'),
+                  _sectionHeader('Next up', colors),
                   ...upcoming.asMap().entries.map(
                         (entry) => _trackTile(
                           entry.value,
+                          colors,
                           onTap: () => controller.playFromContext(
                             queue.context,
                             queue.contextIndex + 1 + entry.key,
@@ -166,11 +203,11 @@ class QueuePanel extends ConsumerWidget {
                 if (currentTrack == null &&
                     queue.manualQueue.isEmpty &&
                     upcoming.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
+                  Padding(
+                    padding: const EdgeInsets.all(24),
                     child: Text(
                       'Nothing queued.\nPlay a track or right-click one to add it to the queue.',
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                      style: TextStyle(color: colors.textFaint, fontSize: 13),
                     ),
                   ),
               ],

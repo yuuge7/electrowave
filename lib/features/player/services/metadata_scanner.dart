@@ -7,6 +7,23 @@ import 'package:path/path.dart' as p;
 import 'package:drift/drift.dart';
 import 'package:electrowave/core/database/app_database.dart';
 
+/// Audio containers the scanner picks up.
+const Set<String> kAudioExtensions = {'.mp3', '.flac', '.m4a', '.ogg', '.wav'};
+
+/// Cover images to look for next to the audio file when a track carries no
+/// embedded art — the common layout for CD rips and Bandcamp downloads.
+const List<String> kFolderArtNames = [
+  'cover',
+  'folder',
+  'front',
+  'album',
+  'albumart',
+  'artwork',
+  'thumb',
+];
+
+const List<String> kFolderArtExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+
 class MetadataScanner {
   final AppDatabase db;
   MetadataScanner(this.db);
@@ -18,7 +35,7 @@ class MetadataScanner {
 
     final dir = Directory(selectedDirectory);
     final files = dir.listSync(recursive: true).whereType<File>().toList();
-    
+
     await _processFiles(files);
   }
 
@@ -27,12 +44,12 @@ class MetadataScanner {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'flac', 'm4a', 'wav'],
+      allowedExtensions: ['mp3', 'flac', 'm4a', 'ogg', 'wav'],
     );
     if (result == null) return;
 
     final files = result.paths.where((path) => path != null).map((path) => File(path!)).toList();
-    
+
     await _processFiles(files);
   }
 
@@ -45,7 +62,7 @@ class MetadataScanner {
     }
 
     for (var file in files) {
-      if (file.path.endsWith('.mp3') || file.path.endsWith('.flac') || file.path.endsWith('.m4a') || file.path.endsWith('.wav')) {
+      if (kAudioExtensions.contains(p.extension(file.path).toLowerCase())) {
         try {
           // Check if this file is already in the database
           final existingTrack = await (db.select(db.tracks)..where((t) => t.filePath.equals(file.path))).getSingleOrNull();
@@ -60,8 +77,10 @@ class MetadataScanner {
               );
               debugPrint('Revived deleted track: ${file.path}');
             } else {
-              // It exists and is active. Skip it to save time.
-              continue; 
+              // Known and active. Backfill the tag fields added later so a
+              // rescan fills in album ordering for an old library, then skip.
+              await _backfill(existingTrack);
+              continue;
             }
           } else {
             // IT'S A BRAND NEW SONG! Extract metadata and insert it.
@@ -71,7 +90,7 @@ class MetadataScanner {
             if (metadata.picture?.data != null) {
               final albumName = metadata.album ?? 'Unknown Album';
               final artistName = metadata.artist ?? 'Unknown Artist';
-              
+
               final fileName = '${albumName.hashCode}_${artistName.hashCode}.jpg';
               final imageFile = File(p.join(coversDir.path, fileName));
 
@@ -79,6 +98,10 @@ class MetadataScanner {
                 await imageFile.writeAsBytes(metadata.picture!.data);
               }
               coverArtPath = imageFile.path;
+            } else {
+              // No embedded art: fall back to a cover image sitting in the
+              // same folder. Referenced in place — no need to copy it.
+              coverArtPath = await _findFolderArt(p.dirname(file.path));
             }
 
             await db.into(db.tracks).insert(
@@ -89,7 +112,11 @@ class MetadataScanner {
                 album: metadata.album ?? 'Unknown Album',
                 durationMs: metadata.duration?.inMilliseconds ?? 0,
                 genre: Value(metadata.genre),
-                coverArtPath: Value(coverArtPath), 
+                coverArtPath: Value(coverArtPath),
+                trackNumber: Value(metadata.trackNumber),
+                discNumber: Value(metadata.discNumber),
+                year: Value(metadata.year),
+                dateAdded: Value(DateTime.now()),
               ),
             );
             debugPrint('Inserted new track: ${file.path}');
@@ -99,5 +126,90 @@ class MetadataScanner {
         }
       }
     }
+  }
+
+  /// Fills in the columns that didn't exist when an older library was scanned:
+  /// track/disc numbers, year, the date the row was added and folder art.
+  Future<void> _backfill(Track track) async {
+    // dateAdded is the marker for "this row predates the extra columns", so
+    // each old row is re-read exactly once — files that genuinely carry no
+    // numbering tags don't get re-parsed on every later scan.
+    if (track.dateAdded != null) return;
+
+    final needsNumbering = track.trackNumber == null &&
+        track.discNumber == null &&
+        track.year == null;
+    final needsArt = track.coverArtPath == null;
+
+    try {
+      final metadata = needsNumbering
+          ? await MetadataGod.readMetadata(file: track.filePath)
+          : null;
+      final art =
+          needsArt ? await _findFolderArt(p.dirname(track.filePath)) : null;
+
+      await (db.update(db.tracks)..where((t) => t.id.equals(track.id))).write(
+        TracksCompanion(
+          trackNumber: metadata == null
+              ? const Value.absent()
+              : Value(metadata.trackNumber),
+          discNumber: metadata == null
+              ? const Value.absent()
+              : Value(metadata.discNumber),
+          year: metadata == null ? const Value.absent() : Value(metadata.year),
+          coverArtPath: art == null ? const Value.absent() : Value(art),
+          // Unknown for pre-existing rows; stamping them now at least gives
+          // "Recently added" something to sort on.
+          dateAdded: track.dateAdded == null
+              ? Value(DateTime.now())
+              : const Value.absent(),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Backfill failed for ${track.filePath}: $e');
+    }
+  }
+
+  /// Folders are looked up once and cached: a scan walks an album directory
+  /// track by track, so this would otherwise stat the same files repeatedly.
+  final Map<String, String?> _folderArtCache = {};
+
+  Future<String?> _findFolderArt(String folderPath) async {
+    if (_folderArtCache.containsKey(folderPath)) {
+      return _folderArtCache[folderPath];
+    }
+
+    String? found;
+    try {
+      final dir = Directory(folderPath);
+      if (await dir.exists()) {
+        // Index the folder's image files once, then pick by preference order
+        // so 'cover.jpg' wins over 'thumb.png' regardless of listing order.
+        final images = <String, String>{};
+        await for (final entity in dir.list(followLinks: false)) {
+          if (entity is! File) continue;
+          final ext = p.extension(entity.path).toLowerCase();
+          if (!kFolderArtExtensions.contains(ext)) continue;
+          final stem = p.basenameWithoutExtension(entity.path).toLowerCase();
+          images.putIfAbsent(stem, () => entity.path);
+        }
+
+        for (final name in kFolderArtNames) {
+          if (images.containsKey(name)) {
+            found = images[name];
+            break;
+          }
+        }
+        // Nothing conventionally named: accept a lone image in the folder.
+        if (found == null && images.length == 1) {
+          found = images.values.first;
+        }
+      }
+    } on FileSystemException {
+      // Unreadable directory: treat as "no art".
+    }
+
+    _folderArtCache[folderPath] = found;
+    return found;
   }
 }

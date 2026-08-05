@@ -1,380 +1,294 @@
-import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' as drift; // Added for soft delete Value()
 
-import '../providers/library_provider.dart';
-import '../../player/services/metadata_scanner.dart';
-import '../../player/providers/player_provider.dart';
-import '../../player/providers/queue_provider.dart';
-import '../../playlists/providers/playlists_provider.dart';
-import '../../../main.dart';
 import '../../../core/database/app_database.dart' as db;
-
-class SearchQueryNotifier extends Notifier<String> {
-  @override
-  String build() => '';
-
-  void updateQuery(String query) {
-    state = query;
-  }
-}
-
-final searchQueryProvider = NotifierProvider<SearchQueryNotifier, String>(SearchQueryNotifier.new);
+import '../../../main.dart';
+import '../../../shared/theme/app_theme.dart';
+import '../../player/services/metadata_scanner.dart';
+import '../providers/library_provider.dart';
+import 'browse_views.dart';
+import 'track_table.dart';
 
 class LibraryView extends ConsumerWidget {
   const LibraryView({super.key});
 
-  String _formatDurationMs(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes.toString().padLeft(2, '0');
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
-
-  void _showTrackMenu(BuildContext context, WidgetRef ref, db.Track track, Offset position) {
-    showMenu<String>(
-      context: context,
-      color: const Color(0xFF282828),
-      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
-      items: const [
-        PopupMenuItem(
-          value: 'queue',
-          child: Row(
-            children: [
-              Icon(Icons.queue_music, color: Colors.white70, size: 18),
-              SizedBox(width: 10),
-              Text('Add to queue', style: TextStyle(color: Colors.white70)),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'playlist',
-          child: Row(
-            children: [
-              Icon(Icons.playlist_add, color: Colors.white70, size: 18),
-              SizedBox(width: 10),
-              Text('Add to playlist…', style: TextStyle(color: Colors.white70)),
-            ],
-          ),
-        ),
-      ],
-    ).then((value) {
-      if (value == 'queue') {
-        ref.read(queueProvider.notifier).addToQueue(track);
-      } else if (value == 'playlist' && context.mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AddToPlaylistDialog(track: track),
-        );
-      }
-    });
-  }
-
-  DataCell _buildRightClickableCell(BuildContext context, WidgetRef ref, db.Track track, String text) {
-    return DataCell(
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onSecondaryTapDown: (details) {
-          _showTrackMenu(context, ref, track, details.globalPosition);
-        },
-        child: Container(
-          alignment: Alignment.centerLeft,
-          child: Text(text, style: const TextStyle(color: Colors.white70)),
-        ),
-      ),
-    );
-  }
-
-  void _confirmDeleteTrack(BuildContext context, WidgetRef ref, db.Track track) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF181818),
-        title: const Text('Delete Track', style: TextStyle(color: Colors.white)),
-        content: Text('Remove "${track.title}" from your library?', style: const TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () async {
-              final database = ref.read(databaseProvider);
-              
-              // 1. Remove the track from any playlists it belongs to
-              await (database.delete(database.playlistTracks)..where((t) => t.trackId.equals(track.id))).go();
-              
-              // 2. SOFT DELETE: Hide the track without destroying its stats
-              await (database.update(database.tracks)..where((t) => t.id.equals(track.id))).write(
-                const db.TracksCompanion(
-                  isDeleted: drift.Value(true),
-                ),
-              );
-              
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      )
-    );
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final libraryAsync = ref.watch(libraryProvider);
-    final database = ref.read(databaseProvider);
-    final searchQuery = ref.watch(searchQueryProvider);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      
-      // UPDATED FAB: Now pops a bottom sheet to choose between Folder or Files
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.greenAccent,
-        onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: const Color(0xFF181818),
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-            builder: (context) => SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.create_new_folder, color: Colors.greenAccent),
-                    title: const Text('Scan Entire Folder', style: TextStyle(color: Colors.white)),
-                    subtitle: const Text('Finds all music in a directory', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      await MetadataScanner(database).scanDirectory();
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.queue_music, color: Colors.greenAccent),
-                    title: const Text('Add Specific Files', style: TextStyle(color: Colors.white)),
-                    subtitle: const Text('Select individual tracks to add', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      await MetadataScanner(database).scanSpecificFiles();
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-        child: const Icon(Icons.add, color: Colors.black),
-      ),
-      
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 8.0),
-            child: TextField(
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Search songs, artists, or albums...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                filled: true,
-                fillColor: const Color(0xFF181818),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.greenAccent, width: 1),
-                ),
-              ),
-              onChanged: (value) {
-                ref.read(searchQueryProvider.notifier).updateQuery(value);
-              },
-            ),
-          ),
-          
-          Expanded(
-            child: libraryAsync.when(
-              data: (tracks) {
-                final filteredTracks = tracks.where((track) {
-                  final query = searchQuery.toLowerCase();
-                  return track.title.toLowerCase().contains(query) ||
-                         track.artist.toLowerCase().contains(query) ||
-                         track.album.toLowerCase().contains(query);
-                }).toList();
-
-                if (filteredTracks.isEmpty) {
-                  return const Center(
-                    child: Text('No tracks found.', style: TextStyle(color: Colors.grey)),
-                  );
-                }
-
-                return DataTable2(
-                  columnSpacing: 12,
-                  horizontalMargin: 16,
-                  columns: const [
-                    DataColumn2(label: Text('Title', style: TextStyle(color: Colors.white)), size: ColumnSize.L),
-                    DataColumn2(label: Text('Artist', style: TextStyle(color: Colors.white))),
-                    DataColumn2(label: Text('Album', style: TextStyle(color: Colors.white))),
-                    DataColumn2(label: Text('Duration', style: TextStyle(color: Colors.white)), size: ColumnSize.S),
-                    DataColumn2(label: Text(''), size: ColumnSize.S, fixedWidth: 50),
-                  ],
-                  rows: List<DataRow>.generate(filteredTracks.length, (index) {
-                    final track = filteredTracks[index];
-                    return DataRow(
-                      onSelectChanged: (selected) {
-                        if (selected ?? false) {
-                          // The filtered list becomes the playback context,
-                          // so next/previous stay inside what's on screen.
-                          ref.read(playbackControllerProvider)
-                              .playFromContext(filteredTracks, index);
-                        }
-                      },
-                      cells: [
-                        _buildRightClickableCell(context, ref, track, track.title),
-                        _buildRightClickableCell(context, ref, track, track.artist),
-                        _buildRightClickableCell(context, ref, track, track.album),
-                        _buildRightClickableCell(context, ref, track, _formatDurationMs(track.durationMs)),
-                        DataCell(
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 20),
-                            onPressed: () => _confirmDeleteTrack(context, ref, track),
-                            hoverColor: Colors.redAccent.withValues(alpha: 0.1),
-                          )
-                        ),
-                      ],
-                    );
-                  }),
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator(color: Colors.greenAccent)),
-              error: (err, stack) => Center(child: Text('Error: $err', style: const TextStyle(color: Colors.red))),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class AddToPlaylistDialog extends ConsumerStatefulWidget {
-  final db.Track track;
-  const AddToPlaylistDialog({super.key, required this.track});
-
-  @override
-  ConsumerState<AddToPlaylistDialog> createState() => _AddToPlaylistDialogState();
-}
-
-class _AddToPlaylistDialogState extends ConsumerState<AddToPlaylistDialog> {
-  final TextEditingController _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final playlistsAsync = ref.watch(playlistsProvider);
+  void _showScanSheet(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
     final database = ref.read(databaseProvider);
 
-    return AlertDialog(
-      backgroundColor: const Color(0xFF181818),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('Add "${widget.track.title}" to...', 
-        style: const TextStyle(color: Colors.white, fontSize: 18),
-        maxLines: 1, 
-        overflow: TextOverflow.ellipsis,
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      content: SizedBox(
-        width: 350,
+      builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      hintText: 'New Playlist Name',
-                      hintStyle: TextStyle(color: Colors.grey),
-                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.greenAccent)),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle, color: Colors.greenAccent),
-                  onPressed: () async {
-                    if (_controller.text.trim().isNotEmpty) {
-                      final newPlaylistId = await database.into(database.playlists).insert(
-                        db.PlaylistsCompanion.insert(name: _controller.text.trim())
-                      );
-                      await database.into(database.playlistTracks).insert(
-                        db.PlaylistTracksCompanion.insert(playlistId: newPlaylistId, trackId: widget.track.id)
-                      );
-                      if (context.mounted) Navigator.pop(context);
-                    }
-                  },
-                )
-              ],
-            ),
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white10),
-            
-            playlistsAsync.when(
-              data: (playlists) {
-                if (playlists.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.all(16.0),
-                    child: Text('No custom playlists yet.', style: TextStyle(color: Colors.grey)),
-                  );
-                }
-                return ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 250),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: playlists.length,
-                    itemBuilder: (context, index) {
-                      final p = playlists[index];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(p.name, style: const TextStyle(color: Colors.white70)),
-                        trailing: const Icon(Icons.add, color: Colors.grey, size: 20),
-                        onTap: () async {
-                          try {
-                            await database.into(database.playlistTracks).insert(
-                              db.PlaylistTracksCompanion.insert(playlistId: p.id, trackId: widget.track.id)
-                            );
-                            if (context.mounted) Navigator.pop(context);
-                          } catch (e) {
-                            if (context.mounted) Navigator.pop(context);
-                          }
-                        },
-                      );
-                    },
-                  ),
-                );
+            ListTile(
+              leading: Icon(Icons.create_new_folder, color: colors.accent),
+              title: Text('Scan Entire Folder',
+                  style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('Finds all music in a directory',
+                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              onTap: () async {
+                Navigator.pop(context);
+                await MetadataScanner(database).scanDirectory();
               },
-              loading: () => const CircularProgressIndicator(color: Colors.greenAccent),
-              error: (e, st) => const Text('Failed to load playlists.', style: TextStyle(color: Colors.red)),
+            ),
+            ListTile(
+              leading: Icon(Icons.queue_music, color: colors.accent),
+              title: Text('Add Specific Files',
+                  style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('Select individual tracks to add',
+                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              onTap: () async {
+                Navigator.pop(context);
+                await MetadataScanner(database).scanSpecificFiles();
+              },
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+    );
+  }
+
+  Widget _searchField(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    return TextField(
+      style: TextStyle(color: colors.textPrimary),
+      decoration: InputDecoration(
+        hintText: 'Search songs, artists, or albums...',
+        hintStyle: TextStyle(color: colors.textFaint),
+        prefixIcon: Icon(Icons.search, color: colors.textFaint),
+        filled: true,
+        fillColor: colors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: colors.accent, width: 1),
+        ),
+      ),
+      onChanged: (value) =>
+          ref.read(searchQueryProvider.notifier).updateQuery(value),
+    );
+  }
+
+  /// Browse mode + sort + the smart-list chips, all of which reset the
+  /// drill-down so the body can never show a stale album.
+  Widget _controls(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final mode = ref.watch(libraryBrowseModeProvider);
+    final sort = ref.watch(librarySortProvider);
+    final smartList = ref.watch(selectedSmartListProvider);
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SegmentedButton<LibraryBrowseMode>(
+          segments: const [
+            ButtonSegment(
+                value: LibraryBrowseMode.tracks,
+                icon: Icon(Icons.music_note),
+                label: Text('Tracks')),
+            ButtonSegment(
+                value: LibraryBrowseMode.albums,
+                icon: Icon(Icons.album),
+                label: Text('Albums')),
+            ButtonSegment(
+                value: LibraryBrowseMode.artists,
+                icon: Icon(Icons.person),
+                label: Text('Artists')),
+            ButtonSegment(
+                value: LibraryBrowseMode.folders,
+                icon: Icon(Icons.folder),
+                label: Text('Folders')),
+          ],
+          selected: {mode},
+          showSelectedIcon: false,
+          onSelectionChanged: (selection) {
+            ref.read(browseDetailProvider.notifier).close();
+            ref.read(selectedSmartListProvider.notifier).select(null);
+            ref.read(libraryBrowseModeProvider.notifier).set(selection.first);
+          },
+        ),
+        if (mode == LibraryBrowseMode.tracks && smartList == null)
+          PopupMenuButton<db.LibrarySort>(
+            tooltip: 'Sort',
+            color: colors.surfaceAlt,
+            onSelected: (value) =>
+                ref.read(librarySortProvider.notifier).set(value),
+            itemBuilder: (context) => [
+              for (final option in db.LibrarySort.values)
+                PopupMenuItem(
+                  value: option,
+                  child: Row(
+                    children: [
+                      Icon(
+                        option == sort ? Icons.check : Icons.sort,
+                        size: 16,
+                        color: option == sort ? colors.accent : colors.textFaint,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(librarySortLabel(option),
+                          style: TextStyle(color: colors.textSecondary)),
+                    ],
+                  ),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.sort, size: 16, color: colors.textFaint),
+                  const SizedBox(width: 8),
+                  Text('Sort: ${librarySortLabel(sort)}',
+                      style: TextStyle(color: colors.textSecondary)),
+                ],
+              ),
+            ),
+          ),
+        for (final list in SmartList.values)
+          FilterChip(
+            label: Text(smartListLabel(list)),
+            selected: smartList == list,
+            showCheckmark: false,
+            avatar: Icon(
+              switch (list) {
+                SmartList.favorites => Icons.favorite,
+                SmartList.recentlyAdded => Icons.new_releases_outlined,
+                SmartList.recentlyPlayed => Icons.history,
+                SmartList.mostPlayed => Icons.local_fire_department_outlined,
+              },
+              size: 16,
+              color: smartList == list ? colors.onAccent : colors.textFaint,
+            ),
+            selectedColor: colors.accent,
+            backgroundColor: colors.surface,
+            labelStyle: TextStyle(
+              color: smartList == list ? colors.onAccent : colors.textSecondary,
+            ),
+            side: BorderSide(color: colors.border),
+            onSelected: (selected) {
+              ref.read(browseDetailProvider.notifier).close();
+              ref
+                  .read(selectedSmartListProvider.notifier)
+                  .select(selected ? list : null);
+            },
+          ),
       ],
+    );
+  }
+
+  Widget _body(BuildContext context, WidgetRef ref) {
+    final smartList = ref.watch(selectedSmartListProvider);
+    if (smartList != null) {
+      return TrackListPage(
+        title: smartListLabel(smartList),
+        subtitle: switch (smartList) {
+          SmartList.favorites => 'Tracks you hearted',
+          SmartList.recentlyAdded => 'Newest in your library',
+          SmartList.recentlyPlayed => 'What you played last',
+          SmartList.mostPlayed => 'Your most played tracks',
+        },
+        tracksAsync: ref.watch(smartListTracksProvider(smartList)),
+        onBack: () =>
+            ref.read(selectedSmartListProvider.notifier).select(null),
+      );
+    }
+
+    final detail = ref.watch(browseDetailProvider);
+    if (detail != null) {
+      void close() => ref.read(browseDetailProvider.notifier).close();
+      switch (detail.mode) {
+        case LibraryBrowseMode.albums:
+          return TrackListPage(
+            title: detail.key,
+            subtitle: 'Album',
+            tracksAsync: ref.watch(albumTracksProvider(detail.key)),
+            onBack: close,
+            showAlbum: false,
+          );
+        case LibraryBrowseMode.artists:
+          return TrackListPage(
+            title: detail.key,
+            subtitle: 'Artist',
+            tracksAsync: ref.watch(artistTracksProvider(detail.key)),
+            onBack: close,
+          );
+        case LibraryBrowseMode.folders:
+          return TrackListPage(
+            title: detail.key.split(RegExp(r'[/\\]')).last,
+            subtitle: detail.key,
+            tracksAsync: ref.watch(folderTracksProvider(detail.key)),
+            onBack: close,
+          );
+        case LibraryBrowseMode.tracks:
+          ref.read(browseDetailProvider.notifier).close();
+      }
+    }
+
+    switch (ref.watch(libraryBrowseModeProvider)) {
+      case LibraryBrowseMode.albums:
+        return const AlbumsGrid();
+      case LibraryBrowseMode.artists:
+        return const ArtistsList();
+      case LibraryBrowseMode.folders:
+        return const FoldersList();
+      case LibraryBrowseMode.tracks:
+        final libraryAsync = ref.watch(libraryProvider);
+        return libraryAsync.when(
+          data: (tracks) => TrackTable(tracks: tracks),
+          loading: () => Center(
+              child: CircularProgressIndicator(color: context.colors.accent)),
+          error: (err, stack) => Center(
+              child:
+                  Text('Error: $err', style: const TextStyle(color: Colors.red))),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+
+    return Scaffold(
+      backgroundColor: colors.background,
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: colors.accent,
+        onPressed: () => _showScanSheet(context, ref),
+        child: Icon(Icons.add, color: colors.onAccent),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding:
+                const EdgeInsets.only(left: 16, right: 16, top: 24, bottom: 8),
+            child: _searchField(context, ref),
+          ),
+          Padding(
+            padding:
+                const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _controls(context, ref),
+            ),
+          ),
+          Expanded(child: _body(context, ref)),
+        ],
+      ),
     );
   }
 }

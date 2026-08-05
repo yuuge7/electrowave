@@ -69,6 +69,21 @@ class QueueNotifier extends Notifier<QueueState> {
     state = state.copyWith(manualQueue: [...state.manualQueue, track]);
   }
 
+  /// "Play next": jumps the queue instead of joining the back of it.
+  void playNext(db.Track track) {
+    state = state.copyWith(manualQueue: [track, ...state.manualQueue]);
+  }
+
+  /// [newIndex] is already adjusted for the removed item (ReorderableListView
+  /// hands over the index in the shortened list).
+  void reorderQueue(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= state.manualQueue.length) return;
+    final queue = [...state.manualQueue];
+    final item = queue.removeAt(oldIndex);
+    queue.insert(newIndex.clamp(0, queue.length), item);
+    state = state.copyWith(manualQueue: queue);
+  }
+
   void removeFromQueue(int index) {
     if (index < 0 || index >= state.manualQueue.length) return;
     final updated = [...state.manualQueue]..removeAt(index);
