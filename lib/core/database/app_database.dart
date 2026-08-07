@@ -535,8 +535,17 @@ class AppDatabase extends _$AppDatabase {
 
   /// Opens a row for the stretch of [trackId] about to be played and returns
   /// its id; the caller tops up [saveListenedMs] as audio actually comes out.
-  Future<int> startListeningSession(int trackId) => into(listeningSessions)
-      .insert(ListeningSessionsCompanion(trackId: Value(trackId)));
+  ///
+  /// [startedAt] defaults to now. The caller passes it explicitly because the
+  /// row is only opened on the first flush, which can be a good while after
+  /// the audio started — and the date is what the monthly/yearly stats filter
+  /// on.
+  Future<int> startListeningSession(int trackId, {DateTime? startedAt}) =>
+      into(listeningSessions).insert(ListeningSessionsCompanion(
+        trackId: Value(trackId),
+        startedAt:
+            startedAt == null ? const Value.absent() : Value(startedAt),
+      ));
 
   /// Absolute value, not a delta — the caller owns the running total, so a
   /// dropped write costs precision rather than corrupting the count.

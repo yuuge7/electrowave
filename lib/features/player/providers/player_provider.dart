@@ -96,6 +96,9 @@ class PlaybackController {
     if (repeatMode == PlaybackRepeatMode.one && fromCompletion) {
       if (currentTrack != null) {
         ref.read(playerProvider).open(Media(currentTrack.filePath));
+        // A repeat lap is a new file open as far as mpv is concerned, so the
+        // speed and the filter chain have to be pushed back here too.
+        unawaited(ref.read(audioEngineProvider).reapplyRate());
       }
       return;
     }

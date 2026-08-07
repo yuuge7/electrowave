@@ -197,5 +197,33 @@ void main() {
       expect(ranked.single.track.id, id);
       expect(ranked.single.listenedMs, 45000);
     });
+
+    test('a session is stamped with when listening began, not when it was '
+        'first written', () async {
+      final id = await _insertTrack(db, title: 'Backdated');
+      final began = DateTime(2026, 1, 31, 23, 59, 30);
+
+      final session = await db.startListeningSession(id, startedAt: began);
+      await db.saveListenedMs(session, 60000);
+
+      // The row is only opened on the first flush, which can land in the next
+      // month; the stats filter has to see the month it was really heard in.
+      final january = await db
+          .watchTotalListenedMs(
+            from: DateTime(2026, 1, 1),
+            to: DateTime(2026, 2, 1),
+          )
+          .first;
+      expect(january, 60000);
+      expect(
+        await db
+            .watchTotalListenedMs(
+              from: DateTime(2026, 2, 1),
+              to: DateTime(2026, 3, 1),
+            )
+            .first,
+        0,
+      );
+    });
   });
 }
