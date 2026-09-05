@@ -45,6 +45,10 @@ jobs:
 
       - name: Package as Debian Installer (.deb)
         run: |
+          # Package versions come from pubspec.yaml so the installers do not
+          # keep shipping a hardcoded number that goes stale every release.
+          APP_VERSION=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
+
           mkdir -p deb_pkg/opt/electrowave
           mkdir -p deb_pkg/usr/share/applications
           mkdir -p deb_pkg/usr/share/icons/hicolor/512x512/apps
@@ -75,7 +79,7 @@ jobs:
           
           cat <<EOF > deb_pkg/DEBIAN/control
           Package: electrowave
-          Version: 1.0.0
+          Version: ${APP_VERSION}
           Architecture: amd64
           Maintainer: yuuge7
           Description: A beautiful local media player.
@@ -91,6 +95,10 @@ jobs:
 
       - name: Package for Arch Linux / CachyOS (.pkg.tar.zst)
         run: |
+          # Package versions come from pubspec.yaml so the installers do not
+          # keep shipping a hardcoded number that goes stale every release.
+          APP_VERSION=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
+
           cd deb_pkg
           tar -czvf ../electrowave-linux-build.tar.gz opt usr
           cd ..
@@ -100,7 +108,7 @@ jobs:
           
           cat <<EOF > arch_build/PKGBUILD
           pkgname=electrowave
-          pkgver=1.0.0
+          pkgver=${APP_VERSION}
           pkgrel=1
           pkgdesc="A beautiful local media player."
           arch=('x86_64')
@@ -115,13 +123,26 @@ jobs:
           sha256sums=('SKIP')
           
           package() {
+              # makepkg automatically extracts the tarball into \$srcdir
               cp -r "\$srcdir/opt" "\$pkgdir/"
               cp -r "\$srcdir/usr" "\$pkgdir/"
+
+              # The bundle is compiled on Ubuntu, where libayatana-appindicator3-dev
+              # ships libayatana-indicator3 and libayatana-ido3 as separate shared
+              # libraries and the linker records them as DT_NEEDED. Arch and CachyOS
+              # build them into libayatana-appindicator3.so.1, so those sonames do not
+              # exist here and the app dies at startup with
+              # "libayatana-indicator3.so.7: cannot open shared object file".
+              # tray_manager only calls app_indicator_* symbols, all of which the Arch
+              # library exports, so dropping the two over-linked entries is safe.
+              patchelf --remove-needed libayatana-indicator3.so.7 \\
+                       --remove-needed libayatana-ido3-0.4.so.0 \\
+                       "\$pkgdir/opt/electrowave/lib/libtray_manager_plugin.so"
           }
           EOF
           
           docker run --rm -v ${{ github.workspace }}/arch_build:/build archlinux /bin/bash -c "
-            pacman -Sy --noconfirm base-devel
+            pacman -Sy --noconfirm base-devel patchelf
             useradd -m builder
             chown -R builder:builder /build
             cd /build
