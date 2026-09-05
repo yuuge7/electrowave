@@ -12,6 +12,7 @@ import 'shared/theme/app_theme.dart';
 import 'shared/services/linux_desktop_integration.dart';
 import 'shared/services/single_instance_service.dart';
 import 'shared/widgets/main_shell.dart';
+import 'shared/widgets/startup_error_app.dart';
 
 Future<void> applyPendingDatabaseImport() async {
   try {
@@ -78,8 +79,26 @@ void main() async {
   // Intercept and apply the database before starting the app
   await applyPendingDatabaseImport();
 
-  // Initialize native media playback engine
-  MediaKit.ensureInitialized();
+  // Initialize native media playback engine.
+  //
+  // On Linux libmpv is a *system* library — package:media_kit dlopens it and
+  // bundles nothing — so a machine without the mpv package throws right here,
+  // before runApp(). Unguarded that kills the process with no window and no
+  // message anywhere except the terminal nobody launched it from, which is
+  // indistinguishable from the app simply not starting. Show the reason
+  // instead.
+  String? engineError;
+  try {
+    MediaKit.ensureInitialized();
+  } catch (e) {
+    engineError = '$e';
+    debugPrint('Audio engine unavailable: $e');
+  }
+
+  if (engineError != null) {
+    runApp(StartupErrorApp(message: engineError));
+    return;
+  }
 
   runApp(
     const ProviderScope(
