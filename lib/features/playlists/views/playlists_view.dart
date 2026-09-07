@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/playlists_provider.dart';
+import 'track_picker_dialog.dart';
 import '../../library/views/browse_views.dart';
 import '../../library/views/tag_editor_dialog.dart';
 import '../../player/providers/player_provider.dart';
@@ -85,6 +86,38 @@ class PlaylistsView extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Opens the library picker and appends whatever comes back.
+  Future<void> _addSongs(
+      BuildContext context, WidgetRef ref, int playlistId, String name) async {
+    final trackIds = await TrackPickerDialog.show(
+      context,
+      title: 'Add songs to "$name"',
+      playlistId: playlistId,
+    );
+    if (trackIds == null || trackIds.isEmpty) return;
+
+    final added =
+        await ref.read(databaseProvider).addTracksToPlaylist(playlistId, trackIds);
+    if (!context.mounted) return;
+
+    final skipped = trackIds.length - added;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(skipped == 0
+            ? 'Added $added ${added == 1 ? 'song' : 'songs'} to "$name".'
+            : 'Added $added, skipped $skipped already in "$name".'),
+      ),
+    );
+  }
+
+  db.Playlist? _findPlaylist(List<db.Playlist>? playlists, int? id) {
+    if (playlists == null || id == null) return null;
+    for (final playlist in playlists) {
+      if (playlist.id == id) return playlist;
+    }
+    return null;
   }
 
   void _confirmDeletePlaylist(
@@ -177,8 +210,8 @@ class PlaylistsView extends ConsumerWidget {
 
   /// Drag-to-reorder track list. A DataTable can't be reordered, so the
   /// playlist body is a list — the order *is* the point of a playlist.
-  Widget _playlistTracks(
-      BuildContext context, WidgetRef ref, int playlistId, List<db.Track> tracks) {
+  Widget _playlistTracks(BuildContext context, WidgetRef ref, int playlistId,
+      String playlistName, List<db.Track> tracks) {
     final colors = context.colors;
 
     return Column(
@@ -210,6 +243,17 @@ class PlaylistsView extends ConsumerWidget {
                 onPressed: () => _playAll(ref, tracks, shuffle: true),
                 icon: const Icon(Icons.shuffle),
                 label: const Text('Shuffle'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.textSecondary,
+                  side: BorderSide(color: colors.border),
+                ),
+                onPressed: () =>
+                    _addSongs(context, ref, playlistId, playlistName),
+                icon: const Icon(Icons.library_add),
+                label: const Text('Add songs'),
               ),
             ],
           ),
@@ -293,6 +337,8 @@ class PlaylistsView extends ConsumerWidget {
     final colors = context.colors;
     final playlistsAsync = ref.watch(playlistsProvider);
     final selectedPlaylistId = ref.watch(selectedPlaylistIdProvider);
+    final selectedPlaylist =
+        _findPlaylist(playlistsAsync.value, selectedPlaylistId);
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -349,13 +395,18 @@ class PlaylistsView extends ConsumerWidget {
                         icon: Icon(Icons.more_vert,
                             color: colors.textFaint, size: 20),
                         onSelected: (value) {
-                          if (value == 'rename') {
+                          if (value == 'add') {
+                            _addSongs(
+                                context, ref, playlist.id, playlist.name);
+                          } else if (value == 'rename') {
                             _renamePlaylist(context, ref, playlist);
                           } else if (value == 'delete') {
                             _confirmDeletePlaylist(context, ref, playlist);
                           }
                         },
                         itemBuilder: (context) => [
+                          _menuItem(
+                              'add', Icons.library_add, 'Add songs…', colors),
                           _menuItem('rename', Icons.drive_file_rename_outline,
                               'Rename', colors),
                           _menuItem(
@@ -390,16 +441,35 @@ class PlaylistsView extends ConsumerWidget {
                       final tracksAsync =
                           ref.watch(playlistTracksProvider(selectedPlaylistId));
 
+                      final name = selectedPlaylist?.name ?? 'playlist';
+
                       return tracksAsync.when(
                         data: (tracks) {
                           if (tracks.isEmpty) {
                             return Center(
-                              child: Text('This playlist is empty.',
-                                  style: TextStyle(color: colors.textFaint)),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('This playlist is empty.',
+                                      style:
+                                          TextStyle(color: colors.textFaint)),
+                                  const SizedBox(height: 12),
+                                  FilledButton.icon(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: colors.accent,
+                                      foregroundColor: colors.onAccent,
+                                    ),
+                                    onPressed: () => _addSongs(context, ref,
+                                        selectedPlaylistId, name),
+                                    icon: const Icon(Icons.library_add),
+                                    label: const Text('Add songs'),
+                                  ),
+                                ],
+                              ),
                             );
                           }
                           return _playlistTracks(
-                              context, ref, selectedPlaylistId, tracks);
+                              context, ref, selectedPlaylistId, name, tracks);
                         },
                         loading: () => Center(
                             child:
@@ -427,50 +497,118 @@ class CreatePlaylistDialog extends ConsumerStatefulWidget {
 class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
   final TextEditingController _controller = TextEditingController();
 
+  /// Songs picked before the playlist exists, in the order they will be
+  /// appended once it does.
+  List<int> _trackIds = const [];
+  bool _saving = false;
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  Future<void> _pickTracks() async {
+    final name = _controller.text.trim();
+    final picked = await TrackPickerDialog.show(
+      context,
+      title: name.isEmpty ? 'Choose songs' : 'Choose songs for "$name"',
+      confirmLabel: 'Add',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _trackIds = picked);
+  }
+
+  Future<void> _create() async {
+    final name = _controller.text.trim();
+    if (name.isEmpty || _saving) return;
+
+    setState(() => _saving = true);
+    final database = ref.read(databaseProvider);
+    final playlistId = await database.createPlaylist(name);
+    if (_trackIds.isNotEmpty) {
+      await database.addTracksToPlaylist(playlistId, _trackIds);
+    }
+    // Jump straight to what was just made — otherwise the new playlist lands
+    // in the sidebar and the pane behind the dialog stays on the old one.
+    ref.read(selectedPlaylistIdProvider.notifier).select(playlistId);
+
+    if (mounted) Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
+    final count = _trackIds.length;
 
     return AlertDialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Text('Create New Playlist',
           style: TextStyle(color: colors.textPrimary)),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        style: TextStyle(color: colors.textPrimary),
-        decoration: InputDecoration(
-          hintText: 'e.g., Late Night Coding',
-          hintStyle: TextStyle(color: colors.textFaint),
-          enabledBorder:
-              UnderlineInputBorder(borderSide: BorderSide(color: colors.border)),
-          focusedBorder:
-              UnderlineInputBorder(borderSide: BorderSide(color: colors.accent)),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              style: TextStyle(color: colors.textPrimary),
+              onSubmitted: (_) => _create(),
+              decoration: InputDecoration(
+                hintText: 'e.g., Late Night Coding',
+                hintStyle: TextStyle(color: colors.textFaint),
+                enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: colors.border)),
+                focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: colors.accent)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor:
+                          count == 0 ? colors.textSecondary : colors.accent,
+                      side: BorderSide(
+                          color: count == 0 ? colors.border : colors.accent),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: _saving ? null : _pickTracks,
+                    icon: const Icon(Icons.library_music, size: 18),
+                    label: Text(count == 0
+                        ? 'Choose songs from library'
+                        : '$count ${count == 1 ? 'song' : 'songs'} chosen — edit'),
+                  ),
+                ),
+                if (count > 0)
+                  IconButton(
+                    tooltip: 'Clear chosen songs',
+                    icon: Icon(Icons.close, color: colors.textFaint, size: 18),
+                    onPressed:
+                        _saving ? null : () => setState(() => _trackIds = const []),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Optional — you can also add songs later.',
+              style: TextStyle(color: colors.textFaint, fontSize: 11),
+            ),
+          ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _saving ? null : () => Navigator.pop(context),
           child: Text('Cancel', style: TextStyle(color: colors.textFaint)),
         ),
         TextButton(
-          onPressed: () async {
-            final name = _controller.text.trim();
-            if (name.isNotEmpty) {
-              final database = ref.read(databaseProvider);
-              await database.into(database.playlists).insert(
-                db.PlaylistsCompanion.insert(name: name)
-              );
-              if (context.mounted) Navigator.pop(context);
-            }
-          },
+          onPressed: _saving ? null : _create,
           child: Text('Create',
               style:
                   TextStyle(color: colors.accent, fontWeight: FontWeight.bold)),

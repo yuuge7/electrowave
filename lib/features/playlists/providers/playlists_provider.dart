@@ -26,3 +26,26 @@ final playlistTracksProvider =
     StreamProvider.family<List<db.Track>, int>((ref, playlistId) {
   return ref.watch(databaseProvider).watchPlaylistTracks(playlistId);
 });
+
+// 4. Membership ids for a playlist, so the track picker can grey out songs the
+// playlist already holds without loading every joined track row.
+final playlistTrackIdsProvider =
+    StreamProvider.family<Set<int>, int>((ref, playlistId) {
+  return ref.watch(databaseProvider).watchPlaylistTrackIds(playlistId);
+});
+
+/// Search + sort the track picker is currently showing.
+///
+/// A record so the family key compares structurally: two rebuilds with the
+/// same text and sort reuse one stream instead of opening a new query.
+typedef TrackPickerQuery = ({String search, db.LibrarySort sort});
+
+// 5. The picker's own view of the library. Deliberately not [libraryProvider]:
+// that one is driven by the library screen's search box, and typing in the
+// picker must not scroll the screen behind it.
+final trackPickerLibraryProvider = StreamProvider.autoDispose
+    .family<List<db.Track>, TrackPickerQuery>((ref, query) {
+  return ref
+      .watch(databaseProvider)
+      .watchLibrary(search: query.search, sort: query.sort);
+});

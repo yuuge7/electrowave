@@ -606,6 +606,9 @@ class AppDatabase extends _$AppDatabase {
   // Playlists
   // -------------------------------------------------------------------------
 
+  Future<int> createPlaylist(String name) =>
+      into(playlists).insert(PlaylistsCompanion.insert(name: name));
+
   Future<void> renamePlaylist(int id, String name) =>
       (update(playlists)..where((pl) => pl.id.equals(id)))
           .write(PlaylistsCompanion(name: Value(name)));
@@ -638,6 +641,59 @@ class AppDatabase extends _$AppDatabase {
         mode: InsertMode.insertOrIgnore,
       );
     });
+  }
+
+  /// Appends many tracks in one transaction, keeping [trackIds] order and
+  /// skipping anything the playlist already holds. Returns how many rows were
+  /// really added, so the caller can report "added 12 of 20".
+  Future<int> addTracksToPlaylist(int playlistId, List<int> trackIds) async {
+    if (trackIds.isEmpty) return 0;
+    return transaction(() async {
+      final existing = await playlistTrackIds(playlistId);
+      final maxPos = playlistTracks.position.max();
+      final query = selectOnly(playlistTracks)
+        ..addColumns([maxPos])
+        ..where(playlistTracks.playlistId.equals(playlistId));
+      final current = await query.map((row) => row.read(maxPos)).getSingle();
+      var position = (current ?? -1) + 1;
+
+      final rows = <PlaylistTracksCompanion>[];
+      for (final trackId in trackIds) {
+        // add() is false when the id is already a member, or repeated in the
+        // incoming list — either way it must not get a second row.
+        if (!existing.add(trackId)) continue;
+        rows.add(PlaylistTracksCompanion(
+          playlistId: Value(playlistId),
+          trackId: Value(trackId),
+          position: Value(position++),
+        ));
+      }
+      if (rows.isNotEmpty) {
+        await batch((b) => b.insertAll(playlistTracks, rows));
+      }
+      return rows.length;
+    });
+  }
+
+  Future<Set<int>> playlistTrackIds(int playlistId) async {
+    final ids = await (selectOnly(playlistTracks)
+          ..addColumns([playlistTracks.trackId])
+          ..where(playlistTracks.playlistId.equals(playlistId)))
+        .map((row) => row.read(playlistTracks.trackId)!)
+        .get();
+    return ids.toSet();
+  }
+
+  /// Membership only. The track picker needs to know what a playlist already
+  /// holds without pulling every joined track row on each keystroke.
+  Stream<Set<int>> watchPlaylistTrackIds(int playlistId) {
+    final query = selectOnly(playlistTracks)
+      ..addColumns([playlistTracks.trackId])
+      ..where(playlistTracks.playlistId.equals(playlistId));
+    return query
+        .map((row) => row.read(playlistTracks.trackId)!)
+        .watch()
+        .map((ids) => ids.toSet());
   }
 
   Future<void> removeTrackFromPlaylist(int playlistId, int trackId) async {
