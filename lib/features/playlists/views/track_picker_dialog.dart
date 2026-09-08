@@ -9,6 +9,8 @@ import '../../../core/database/app_database.dart' as db;
 import '../../../shared/theme/app_theme.dart';
 import '../../library/providers/library_provider.dart';
 import '../../library/views/browse_views.dart';
+import '../../player/providers/player_provider.dart';
+import '../../player/services/audio_engine.dart';
 import '../providers/playlists_provider.dart';
 
 /// Multi-select browser over the whole library.
@@ -351,6 +353,43 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
     );
   }
 
+  /// Plays [track] right now without disturbing the playback context: the
+  /// context picks up again once the preview ends, so auditioning a song from
+  /// the picker doesn't cost the user their queue.
+  void _togglePreview(db.Track track, bool isCurrent, bool isPlaying) {
+    final player = ref.read(playerProvider);
+    ref.read(audioEngineProvider).noteUserActivity();
+    if (isCurrent) {
+      isPlaying ? player.pause() : player.play();
+      return;
+    }
+    ref.read(playbackControllerProvider).playQueuedTrackNow(track);
+  }
+
+  Widget _previewButton(ElectrowaveColors colors, db.Track track) {
+    final isCurrent = ref.watch(currentTrackProvider)?.id == track.id;
+    final player = ref.watch(playerProvider);
+
+    return StreamBuilder<bool>(
+      stream: player.stream.playing,
+      initialData: player.state.playing,
+      builder: (context, snapshot) {
+        final isPlaying = isCurrent && (snapshot.data ?? false);
+        return IconButton(
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+          iconSize: 20,
+          tooltip: isPlaying ? 'Pause preview' : 'Preview this song',
+          icon: Icon(
+            isPlaying ? Icons.pause_circle_filled : Icons.play_circle_outline,
+            color: isCurrent ? colors.accent : colors.textFaint,
+          ),
+          onPressed: () => _togglePreview(track, isCurrent, isPlaying),
+        );
+      },
+    );
+  }
+
   Widget _list(ElectrowaveColors colors, List<db.Track> tracks,
       List<db.Track> visible, Set<int> alreadyIn) {
     if (visible.isEmpty) {
@@ -426,7 +465,9 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                  _previewButton(colors, track),
+                  const SizedBox(width: 8),
                   Text(
                     added ? 'In playlist' : _formatDurationMs(track.durationMs),
                     style: TextStyle(color: colors.textFaint, fontSize: 11),
