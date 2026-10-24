@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/database/app_database.dart' show TrackListeningStat;
 import '../../../shared/theme/app_theme.dart';
 import '../../settings/providers/wrapped_stats_provider.dart';
+import '../providers/song_stats_provider.dart';
+import 'song_stats_table.dart';
 
 class StatsView extends ConsumerWidget {
   const StatsView({super.key});
@@ -23,6 +25,7 @@ class StatsView extends ConsumerWidget {
     final wrappedAsync = ref.watch(wrappedStatsProvider);
     final listenedAsync = ref.watch(totalListenedMsProvider);
     final listeningStatsAsync = ref.watch(listeningTimeStatsProvider);
+    final mode = ref.watch(statsModeProvider);
 
     final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     final years = List.generate(DateTime.now().year - 2024 + 1, (index) => 2024 + index);
@@ -43,6 +46,23 @@ class StatsView extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
+                SegmentedButton<StatsMode>(
+                  segments: const [
+                    ButtonSegment(
+                        value: StatsMode.overview,
+                        icon: Icon(Icons.leaderboard),
+                        label: Text('Overview')),
+                    ButtonSegment(
+                        value: StatsMode.songs,
+                        icon: Icon(Icons.music_note),
+                        label: Text('Songs')),
+                  ],
+                  selected: {mode},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (selection) =>
+                      ref.read(statsModeProvider.notifier).set(selection.first),
+                ),
+                const SizedBox(width: 24),
                 DropdownButton<StatsFilter>(
                   dropdownColor: colors.surfaceAlt,
                   value: state.filter,
@@ -95,6 +115,10 @@ class StatsView extends ConsumerWidget {
 
           Divider(color: colors.border),
 
+          // --- PER-SONG TABLE ---
+          if (mode == StatsMode.songs)
+            const Expanded(child: SongStatsTable())
+          else
           // --- WRAPPED DATA RENDERER ---
           Expanded(
             child: wrappedAsync.when(

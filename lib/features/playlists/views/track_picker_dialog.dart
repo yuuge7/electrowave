@@ -4,13 +4,15 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart' show Player;
 
 import '../../../core/database/app_database.dart' as db;
 import '../../../shared/theme/app_theme.dart';
 import '../../library/providers/library_provider.dart';
 import '../../library/views/browse_views.dart';
 import '../../player/providers/player_provider.dart';
-import '../../player/services/audio_engine.dart';
+import '../../player/services/preview_player.dart';
+import '../../settings/providers/settings_provider.dart';
 import '../providers/playlists_provider.dart';
 
 /// Multi-select browser over the whole library.
@@ -21,6 +23,9 @@ import '../providers/playlists_provider.dart';
 /// ticking a few, searching "1979", ticking a few more.
 ///
 /// Pass [playlistId] to grey out songs that playlist already holds.
+///
+/// Every row has a preview button. Previews run on their own [PreviewPlayer],
+/// so trying songs out leaves the queue, the playing song and the stats alone.
 class TrackPickerDialog extends ConsumerStatefulWidget {
   const TrackPickerDialog({
     super.key,
@@ -74,8 +79,20 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
   /// Row that anchors a shift-click range.
   int? _anchorIndex;
 
+  late final PreviewPlayer _preview;
+
+  @override
+  void initState() {
+    super.initState();
+    _preview = PreviewPlayer(
+      ref.read(playerProvider),
+      settings: ref.read(settingsControllerProvider),
+    );
+  }
+
   @override
   void dispose() {
+    _preview.dispose();
     _debounce?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
@@ -176,6 +193,18 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                       style: const TextStyle(color: Colors.red)),
                 ),
               ),
+            ),
+            ListenableBuilder(
+              listenable: _preview,
+              builder: (context, _) => _preview.track == null
+                  ? const SizedBox.shrink()
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Divider(height: 1, color: colors.border),
+                        _previewBar(colors, alreadyIn),
+                      ],
+                    ),
             ),
             Divider(height: 1, color: colors.border),
             _footer(
@@ -353,28 +382,12 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
     );
   }
 
-  /// Plays [track] right now without disturbing the playback context: the
-  /// context picks up again once the preview ends, so auditioning a song from
-  /// the picker doesn't cost the user their queue.
-  void _togglePreview(db.Track track, bool isCurrent, bool isPlaying) {
-    final player = ref.read(playerProvider);
-    ref.read(audioEngineProvider).noteUserActivity();
-    if (isCurrent) {
-      isPlaying ? player.pause() : player.play();
-      return;
-    }
-    ref.read(playbackControllerProvider).playQueuedTrackNow(track);
-  }
-
   Widget _previewButton(ElectrowaveColors colors, db.Track track) {
-    final isCurrent = ref.watch(currentTrackProvider)?.id == track.id;
-    final player = ref.watch(playerProvider);
-
-    return StreamBuilder<bool>(
-      stream: player.stream.playing,
-      initialData: player.state.playing,
-      builder: (context, snapshot) {
-        final isPlaying = isCurrent && (snapshot.data ?? false);
+    return ListenableBuilder(
+      listenable: _preview,
+      builder: (context, _) {
+        final isCurrent = _preview.track?.id == track.id;
+        final isPlaying = isCurrent && _preview.playing;
         return IconButton(
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints.tightFor(width: 32, height: 32),
@@ -384,7 +397,151 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
             isPlaying ? Icons.pause_circle_filled : Icons.play_circle_outline,
             color: isCurrent ? colors.accent : colors.textFaint,
           ),
-          onPressed: () => _togglePreview(track, isCurrent, isPlaying),
+          onPressed: () => isCurrent && _preview.error == null
+              ? _preview.toggle()
+              : _preview.play(track),
+        );
+      },
+    );
+  }
+
+  /// Docked above the footer while a song is being previewed: play/pause, a
+  /// seek bar to jump to the chorus, and a shortcut to tick the song.
+  Widget _previewBar(ElectrowaveColors colors, Set<int> alreadyIn) {
+    final track = _preview.track!;
+    final error = _preview.error;
+    final added = alreadyIn.contains(track.id);
+    final checked = _selectedLookup.contains(track.id);
+
+    return Container(
+      color: colors.accent.withValues(alpha: 0.06),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          ArtThumb(path: track.coverArtPath, size: 40),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 170,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  track.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  track.artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colors.textFaint, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: _preview.playing ? 'Pause preview' : 'Play preview',
+            icon: Icon(
+              _preview.playing
+                  ? Icons.pause_circle_filled
+                  : Icons.play_circle_filled,
+              color: error == null ? colors.accent : colors.textFaint,
+              size: 32,
+            ),
+            onPressed: error == null ? _preview.toggle : null,
+          ),
+          Expanded(
+            child: error != null
+                ? Text(
+                    "Can't play this song: $error",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  )
+                : _previewSeekBar(colors, _preview.player),
+          ),
+          const SizedBox(width: 4),
+          if (added)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text('In playlist',
+                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+            )
+          else
+            TextButton.icon(
+              onPressed: () =>
+                  setState(() => _setSelected(track.id, !checked)),
+              icon: Icon(
+                checked ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 18,
+                color: checked ? colors.accent : colors.textFaint,
+              ),
+              label: Text(
+                checked ? 'Selected' : 'Select',
+                style: TextStyle(
+                  color: checked ? colors.accent : colors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Stop preview',
+            icon: Icon(Icons.close, color: colors.textFaint, size: 18),
+            onPressed: _preview.stop,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _previewSeekBar(ElectrowaveColors colors, Player player) {
+    final timeStyle = TextStyle(
+      color: colors.textFaint,
+      fontSize: 11,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+
+    return StreamBuilder<Duration>(
+      stream: player.stream.duration,
+      initialData: player.state.duration,
+      builder: (context, durationSnapshot) {
+        final duration = durationSnapshot.data ?? Duration.zero;
+        return StreamBuilder<Duration>(
+          stream: player.stream.position,
+          initialData: player.state.position,
+          builder: (context, positionSnapshot) {
+            final position = positionSnapshot.data ?? Duration.zero;
+            final end = duration.inMilliseconds > 0
+                ? duration.inMilliseconds.toDouble()
+                : 1.0;
+            return Row(
+              children: [
+                Text(_formatDurationMs(position.inMilliseconds),
+                    style: timeStyle),
+                Expanded(
+                  child: Slider(
+                    activeColor: colors.accent,
+                    inactiveColor: colors.border,
+                    value: position.inMilliseconds.toDouble().clamp(0.0, end),
+                    max: end,
+                    onChanged: duration == Duration.zero
+                        ? null
+                        : (value) => _preview
+                            .seek(Duration(milliseconds: value.toInt())),
+                  ),
+                ),
+                Text(_formatDurationMs(duration.inMilliseconds),
+                    style: timeStyle),
+              ],
+            );
+          },
         );
       },
     );

@@ -133,6 +133,36 @@ class TrackListeningStat {
   final int listenedMs;
 }
 
+/// Everything Stats → Songs shows for one track over a date range.
+class SongStat {
+  const SongStat({
+    required this.track,
+    required this.plays,
+    required this.listenedMs,
+    required this.starts,
+    required this.skips,
+    this.firstPlayed,
+    this.lastPlayed,
+  });
+
+  final Track track;
+
+  /// Plays booked by the scrobbler (a quarter of the track actually heard).
+  final int plays;
+
+  /// Audio that really came out, from [ListeningSessions].
+  final int listenedMs;
+
+  /// Times the track was started and played for at least a second.
+  final int starts;
+
+  /// Of those, the ones abandoned before a quarter was heard.
+  final int skips;
+
+  final DateTime? firstPlayed;
+  final DateTime? lastPlayed;
+}
+
 @DriftDatabase(tables: [
   Tracks,
   Playlists,
@@ -600,6 +630,91 @@ class AppDatabase extends _$AppDatabase {
       ..addColumns([total])
       ..where(_listenedInRange(from, to));
     return query.map((row) => row.read(total) ?? 0).watchSingle();
+  }
+
+  /// One row per library track with its numbers for `[from, to)`.
+  ///
+  /// Tracks with no activity in the range come back with zeros rather than
+  /// being dropped, so the per-song table really lists every song.
+  Stream<List<SongStat>> watchSongStats({DateTime? from, DateTime? to}) {
+    final variables = <Variable<Object>>[];
+
+    String rangeFilter(String column) {
+      final parts = <String>[];
+      if (from != null) {
+        parts.add('$column >= ?');
+        variables.add(Variable<DateTime>(from));
+      }
+      if (to != null) {
+        parts.add('$column < ?');
+        variables.add(Variable<DateTime>(to));
+      }
+      return parts.isEmpty ? '' : 'WHERE ${parts.join(' AND ')}';
+    }
+
+    // Built in placeholder order: history first, then sessions.
+    final historyWhere = rangeFilter('played_at');
+    final sessionWhere = rangeFilter('ls.started_at');
+
+    return customSelect(
+      '''
+      SELECT t.*,
+        COALESCE(h.plays, 0) AS stat_plays,
+        h.first_played AS stat_first_played,
+        h.last_played AS stat_last_played,
+        COALESCE(s.listened, 0) AS stat_listened,
+        COALESCE(s.starts, 0) AS stat_starts,
+        COALESCE(s.skips, 0) AS stat_skips
+      FROM tracks t
+      LEFT JOIN (
+        SELECT track_id, COUNT(*) AS plays,
+          MIN(played_at) AS first_played, MAX(played_at) AS last_played
+        FROM playback_history
+        $historyWhere
+        GROUP BY track_id
+      ) h ON h.track_id = t.id
+      LEFT JOIN (
+        SELECT ls.track_id, SUM(ls.listened_ms) AS listened, COUNT(*) AS starts,
+          SUM(CASE WHEN ls.listened_ms * 4 < st.duration_ms THEN 1 ELSE 0 END)
+            AS skips
+        FROM listening_sessions ls
+        INNER JOIN tracks st ON st.id = ls.track_id
+        $sessionWhere
+        GROUP BY ls.track_id
+      ) s ON s.track_id = t.id
+      WHERE t.is_deleted = 0
+      ''',
+      variables: variables,
+      readsFrom: {tracks, playbackHistory, listeningSessions},
+    ).watch().map((rows) => [
+          for (final row in rows)
+            SongStat(
+              track: tracks.map(row.data),
+              plays: row.read<int>('stat_plays'),
+              listenedMs: row.read<int>('stat_listened'),
+              starts: row.read<int>('stat_starts'),
+              skips: row.read<int>('stat_skips'),
+              firstPlayed: row.readNullable<DateTime>('stat_first_played'),
+              lastPlayed: row.readNullable<DateTime>('stat_last_played'),
+            ),
+        ]);
+  }
+
+  /// Every booked play of one track, oldest first.
+  Stream<List<DateTime>> watchPlayTimes(int trackId) {
+    return (select(playbackHistory)
+          ..where((h) => h.trackId.equals(trackId))
+          ..orderBy([(h) => OrderingTerm.asc(h.playedAt)]))
+        .map((row) => row.playedAt)
+        .watch();
+  }
+
+  /// Every measured listening stretch of one track, oldest first.
+  Stream<List<ListeningSessionEntry>> watchListeningSessionsFor(int trackId) {
+    return (select(listeningSessions)
+          ..where((s) => s.trackId.equals(trackId))
+          ..orderBy([(s) => OrderingTerm.asc(s.startedAt)]))
+        .watch();
   }
 
   // -------------------------------------------------------------------------
