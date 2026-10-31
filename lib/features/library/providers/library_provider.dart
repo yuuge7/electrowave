@@ -3,24 +3,24 @@ import '../../../../core/database/app_database.dart';
 import '../../../main.dart'; // Import to access databaseProvider
 
 /// How the library is grouped on screen.
-enum LibraryBrowseMode { tracks, albums, artists, folders }
+enum LibraryBrowseMode { tracks, albums, artists, folders, genres, years }
 
 /// Generated lists that aren't playlists: they come from listening data.
 enum SmartList { favorites, recentlyAdded, recentlyPlayed, mostPlayed }
 
 String smartListLabel(SmartList list) => switch (list) {
-      SmartList.favorites => 'Favorites',
-      SmartList.recentlyAdded => 'Recently added',
-      SmartList.recentlyPlayed => 'Recently played',
-      SmartList.mostPlayed => 'Most played',
-    };
+  SmartList.favorites => 'Favorites',
+  SmartList.recentlyAdded => 'Recently added',
+  SmartList.recentlyPlayed => 'Recently played',
+  SmartList.mostPlayed => 'Most played',
+};
 
 String librarySortLabel(LibrarySort sort) => switch (sort) {
-      LibrarySort.title => 'Title',
-      LibrarySort.artist => 'Artist',
-      LibrarySort.dateAdded => 'Date added',
-      LibrarySort.playCount => 'Play count',
-    };
+  LibrarySort.title => 'Title',
+  LibrarySort.artist => 'Artist',
+  LibrarySort.dateAdded => 'Date added',
+  LibrarySort.playCount => 'Play count',
+};
 
 class SearchQueryNotifier extends Notifier<String> {
   @override
@@ -31,8 +31,9 @@ class SearchQueryNotifier extends Notifier<String> {
   }
 }
 
-final searchQueryProvider =
-    NotifierProvider<SearchQueryNotifier, String>(SearchQueryNotifier.new);
+final searchQueryProvider = NotifierProvider<SearchQueryNotifier, String>(
+  SearchQueryNotifier.new,
+);
 
 class LibrarySortNotifier extends Notifier<LibrarySort> {
   @override
@@ -41,8 +42,9 @@ class LibrarySortNotifier extends Notifier<LibrarySort> {
   void set(LibrarySort sort) => state = sort;
 }
 
-final librarySortProvider =
-    NotifierProvider<LibrarySortNotifier, LibrarySort>(LibrarySortNotifier.new);
+final librarySortProvider = NotifierProvider<LibrarySortNotifier, LibrarySort>(
+  LibrarySortNotifier.new,
+);
 
 class LibraryBrowseModeNotifier extends Notifier<LibraryBrowseMode> {
   @override
@@ -53,7 +55,8 @@ class LibraryBrowseModeNotifier extends Notifier<LibraryBrowseMode> {
 
 final libraryBrowseModeProvider =
     NotifierProvider<LibraryBrowseModeNotifier, LibraryBrowseMode>(
-        LibraryBrowseModeNotifier.new);
+      LibraryBrowseModeNotifier.new,
+    );
 
 /// The album / artist / folder the user drilled into, or null at the top
 /// level. Cleared whenever the browse mode changes.
@@ -78,7 +81,8 @@ class BrowseDetailNotifier extends Notifier<BrowseDetail?> {
 
 final browseDetailProvider =
     NotifierProvider<BrowseDetailNotifier, BrowseDetail?>(
-        BrowseDetailNotifier.new);
+      BrowseDetailNotifier.new,
+    );
 
 /// Selected smart list, or null when browsing the library normally.
 class SmartListNotifier extends Notifier<SmartList?> {
@@ -119,23 +123,37 @@ final foldersProvider = StreamProvider<List<FolderSummary>>((ref) {
   return ref.watch(databaseProvider).watchFolders();
 });
 
-final albumTracksProvider =
-    StreamProvider.family<List<Track>, String>((ref, album) {
-  return ref.watch(databaseProvider).watchAlbumTracks(album);
+final albumTracksProvider = StreamProvider.family<List<Track>, String>((
+  ref,
+  album,
+) {
+  final parts = album.split('\u0000');
+  return ref
+      .watch(databaseProvider)
+      .watchAlbumTracks(
+        parts.first,
+        albumArtist: parts.length > 1 ? parts[1] : null,
+      );
 });
 
-final artistTracksProvider =
-    StreamProvider.family<List<Track>, String>((ref, artist) {
+final artistTracksProvider = StreamProvider.family<List<Track>, String>((
+  ref,
+  artist,
+) {
   return ref.watch(databaseProvider).watchArtistTracks(artist);
 });
 
-final folderTracksProvider =
-    StreamProvider.family<List<Track>, String>((ref, folderPath) {
+final folderTracksProvider = StreamProvider.family<List<Track>, String>((
+  ref,
+  folderPath,
+) {
   return ref.watch(databaseProvider).watchFolderTracks(folderPath);
 });
 
-final smartListTracksProvider =
-    StreamProvider.family<List<Track>, SmartList>((ref, list) {
+final smartListTracksProvider = StreamProvider.family<List<Track>, SmartList>((
+  ref,
+  list,
+) {
   final db = ref.watch(databaseProvider);
   return switch (list) {
     SmartList.favorites => db.watchFavorites(),

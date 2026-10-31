@@ -53,12 +53,18 @@ Database _openLegacyDatabase() {
 
   // Track 1 played twice, track 2 once, track 3 never.
   const day = 86400;
-  raw.execute('INSERT INTO playback_history (track_id, played_at) VALUES (1, ?)',
-      [1700000000]);
-  raw.execute('INSERT INTO playback_history (track_id, played_at) VALUES (1, ?)',
-      [1700000000 + day]);
-  raw.execute('INSERT INTO playback_history (track_id, played_at) VALUES (2, ?)',
-      [1700000000 + 2 * day]);
+  raw.execute(
+    'INSERT INTO playback_history (track_id, played_at) VALUES (1, ?)',
+    [1700000000],
+  );
+  raw.execute(
+    'INSERT INTO playback_history (track_id, played_at) VALUES (1, ?)',
+    [1700000000 + day],
+  );
+  raw.execute(
+    'INSERT INTO playback_history (track_id, played_at) VALUES (2, ?)',
+    [1700000000 + 2 * day],
+  );
 
   raw.execute("INSERT INTO playlists (id, name) VALUES (1, 'Old mix')");
   for (final trackId in [3, 1, 2]) {
@@ -80,30 +86,32 @@ void main() {
   });
   tearDown(() => db.close());
 
-  test('upgrading from v6 keeps the library and backfills the new columns',
-      () async {
-    // The first query runs the migration.
-    final tracks = await db.select(db.tracks).get();
-    expect(tracks.length, 3);
+  test(
+    'upgrading from v6 keeps the library and backfills the new columns',
+    () async {
+      // The first query runs the migration.
+      final tracks = await db.select(db.tracks).get();
+      expect(tracks.length, 3);
 
-    final byId = {for (final track in tracks) track.id: track};
+      final byId = {for (final track in tracks) track.id: track};
 
-    // Play counts and last-played rebuilt from the existing history rows.
-    expect(byId[1]!.totalPlayCount, 2);
-    expect(byId[2]!.totalPlayCount, 1);
-    expect(byId[3]!.totalPlayCount, 0);
-    expect(byId[1]!.lastPlayed, isNotNull);
-    expect(byId[3]!.lastPlayed, isNull);
+      // Play counts and last-played rebuilt from the existing history rows.
+      expect(byId[1]!.totalPlayCount, 2);
+      expect(byId[2]!.totalPlayCount, 1);
+      expect(byId[3]!.totalPlayCount, 0);
+      expect(byId[1]!.lastPlayed, isNotNull);
+      expect(byId[3]!.lastPlayed, isNull);
 
-    // New columns exist with sane defaults.
-    expect(byId[1]!.isFavorite, isFalse);
-    expect(byId[1]!.trackNumber, isNull);
-    expect(byId[1]!.dateAdded, isNull);
+      // New columns exist with sane defaults.
+      expect(byId[1]!.isFavorite, isFalse);
+      expect(byId[1]!.trackNumber, isNull);
+      expect(byId[1]!.dateAdded, isNull);
 
-    // Most played is ordered by the rebuilt counts.
-    final mostPlayed = await db.watchMostPlayed().first;
-    expect(mostPlayed.map((t) => t.id), [1, 2]);
-  });
+      // Most played is ordered by the rebuilt counts.
+      final mostPlayed = await db.watchMostPlayed().first;
+      expect(mostPlayed.map((t) => t.id), [1, 2]);
+    },
+  );
 
   test('upgrading from v6 gives playlist rows their insertion order', () async {
     final tracks = await db.watchPlaylistTracks(1).first;

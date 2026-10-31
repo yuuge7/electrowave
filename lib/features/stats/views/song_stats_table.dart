@@ -71,22 +71,26 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
         a.track.title.toLowerCase().compareTo(b.track.title.toLowerCase());
 
     int primary(SongStat a, SongStat b) => switch (_sort) {
-          _SortKey.title => byTitle(a, b),
-          _SortKey.artist => a.track.artist
-              .toLowerCase()
-              .compareTo(b.track.artist.toLowerCase()),
-          _SortKey.plays => a.plays != b.plays
-              ? a.plays.compareTo(b.plays)
-              : a.listenedMs.compareTo(b.listenedMs),
-          _SortKey.listened => a.listenedMs != b.listenedMs
-              ? a.listenedMs.compareTo(b.listenedMs)
-              : a.plays.compareTo(b.plays),
-          _SortKey.skips => a.skips != b.skips
-              ? a.skips.compareTo(b.skips)
-              : a.starts.compareTo(b.starts),
-          _SortKey.lastPlayed => (a.lastPlayed ?? DateTime(0))
-              .compareTo(b.lastPlayed ?? DateTime(0)),
-        };
+      _SortKey.title => byTitle(a, b),
+      _SortKey.artist => a.track.artist.toLowerCase().compareTo(
+        b.track.artist.toLowerCase(),
+      ),
+      _SortKey.plays =>
+        a.plays != b.plays
+            ? a.plays.compareTo(b.plays)
+            : a.listenedMs.compareTo(b.listenedMs),
+      _SortKey.listened =>
+        a.listenedMs != b.listenedMs
+            ? a.listenedMs.compareTo(b.listenedMs)
+            : a.plays.compareTo(b.plays),
+      _SortKey.skips =>
+        a.skips != b.skips
+            ? a.skips.compareTo(b.skips)
+            : a.starts.compareTo(b.starts),
+      _SortKey.lastPlayed => (a.lastPlayed ?? DateTime(0)).compareTo(
+        b.lastPlayed ?? DateTime(0),
+      ),
+    };
 
     rows.sort((a, b) {
       // Never-played songs stay at the bottom of "Last played" either way.
@@ -107,10 +111,9 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
       stat: visible[index],
       // The table on screen becomes the playback context, like every other
       // track list in the app.
-      onPlay: () => ref.read(playbackControllerProvider).playFromContext(
-            [for (final stat in visible) stat.track],
-            index,
-          ),
+      onPlay: () => ref.read(playbackControllerProvider).playFromContext([
+        for (final stat in visible) stat.track,
+      ], index),
     );
   }
 
@@ -124,12 +127,16 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
       loading: () =>
           Center(child: CircularProgressIndicator(color: colors.accent)),
       error: (err, stack) => Center(
-          child: Text('Could not load song stats: $err',
-              style: const TextStyle(color: Colors.red))),
+        child: Text(
+          'Could not load song stats: $err',
+          style: const TextStyle(color: Colors.red),
+        ),
+      ),
       data: (stats) {
         final visible = _visible(stats);
-        final playedCount =
-            stats.where((s) => s.plays > 0 || s.starts > 0).length;
+        final playedCount = stats
+            .where((s) => s.plays > 0 || s.starts > 0)
+            .length;
 
         return Column(
           children: [
@@ -144,7 +151,11 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
   }
 
   Widget _toolbar(
-      ElectrowaveColors colors, int total, int played, String period) {
+    ElectrowaveColors colors,
+    int total,
+    int played,
+    String period,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Row(
@@ -159,21 +170,29 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
                 isDense: true,
                 hintText: 'Search title, artist or album',
                 hintStyle: TextStyle(color: colors.textFaint),
-                prefixIcon:
-                    Icon(Icons.search, color: colors.textFaint, size: 18),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: colors.textFaint,
+                  size: 18,
+                ),
                 suffixIcon: _searchController.text.isEmpty
                     ? null
                     : IconButton(
                         tooltip: 'Clear search',
-                        icon:
-                            Icon(Icons.clear, color: colors.textFaint, size: 18),
+                        icon: Icon(
+                          Icons.clear,
+                          color: colors.textFaint,
+                          size: 18,
+                        ),
                         onPressed: () =>
                             setState(() => _searchController.clear()),
                       ),
                 enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: colors.border)),
+                  borderSide: BorderSide(color: colors.border),
+                ),
                 focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: colors.accent)),
+                  borderSide: BorderSide(color: colors.accent),
+                ),
               ),
             ),
           ),
@@ -189,7 +208,8 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
             backgroundColor: Colors.transparent,
             selectedColor: colors.accent.withValues(alpha: 0.15),
             side: BorderSide(
-                color: _playedOnly ? colors.accent : colors.border),
+              color: _playedOnly ? colors.accent : colors.border,
+            ),
             onSelected: (value) => setState(() => _playedOnly = value),
           ),
           const Spacer(),
@@ -221,13 +241,18 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
-            mainAxisAlignment:
-                numeric ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: numeric
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
             children: [
               if (active && numeric) ...[arrow, const SizedBox(width: 2)],
               Flexible(
-                child: Text(text,
-                    style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  text,
+                  style: style,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               if (active && !numeric) ...[const SizedBox(width: 2), arrow],
             ],
@@ -245,36 +270,43 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
           const SizedBox(width: 12),
           Expanded(flex: 2, child: label('Artist', _SortKey.artist)),
           SizedBox(
-              width: _playsWidth,
-              child: label('Plays', _SortKey.plays, numeric: true)),
+            width: _playsWidth,
+            child: label('Plays', _SortKey.plays, numeric: true),
+          ),
           SizedBox(
-              width: _listenedWidth,
-              child: label('Listened', _SortKey.listened, numeric: true)),
+            width: _listenedWidth,
+            child: label('Listened', _SortKey.listened, numeric: true),
+          ),
           SizedBox(
-              width: _skipsWidth,
-              child: Tooltip(
-                message: 'Started, then stopped before a quarter was heard',
-                child: label('Skips', _SortKey.skips, numeric: true),
-              )),
+            width: _skipsWidth,
+            child: Tooltip(
+              message: 'Started, then stopped before a quarter was heard',
+              child: label('Skips', _SortKey.skips, numeric: true),
+            ),
+          ),
           SizedBox(
-              width: _lastPlayedWidth,
-              child:
-                  label('Last played', _SortKey.lastPlayed, numeric: true)),
+            width: _lastPlayedWidth,
+            child: label('Last played', _SortKey.lastPlayed, numeric: true),
+          ),
         ],
       ),
     );
   }
 
-  Widget _list(ElectrowaveColors colors, List<SongStat> all,
-      List<SongStat> visible) {
+  Widget _list(
+    ElectrowaveColors colors,
+    List<SongStat> all,
+    List<SongStat> visible,
+  ) {
     if (visible.isEmpty) {
       final message = all.isEmpty
           ? 'Your library is empty. Scan a folder first.'
           : _searchController.text.trim().isNotEmpty
-              ? 'No songs match that search.'
-              : 'Nothing played in this period.';
+          ? 'No songs match that search.'
+          : 'Nothing played in this period.';
       return Center(
-          child: Text(message, style: TextStyle(color: colors.textFaint)));
+        child: Text(message, style: TextStyle(color: colors.textFaint)),
+      );
     }
 
     final currentId = ref.watch(currentTrackProvider)?.id;
@@ -291,10 +323,10 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
           final isCurrent = track.id == currentId;
 
           TextStyle number(int value) => TextStyle(
-                color: value == 0 ? colors.textFaint : colors.textSecondary,
-                fontSize: 13,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              );
+            color: value == 0 ? colors.textFaint : colors.textSecondary,
+            fontSize: 13,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          );
 
           return InkWell(
             onTap: () => _openDetails(visible, index),
@@ -334,14 +366,19 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
                       track.artist,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          TextStyle(color: colors.textSecondary, fontSize: 13),
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                   SizedBox(
                     width: _playsWidth,
-                    child: Text('${stat.plays}',
-                        textAlign: TextAlign.end, style: number(stat.plays)),
+                    child: Text(
+                      '${stat.plays}',
+                      textAlign: TextAlign.end,
+                      style: number(stat.plays),
+                    ),
                   ),
                   SizedBox(
                     width: _listenedWidth,
@@ -359,8 +396,11 @@ class _SongStatsTableState extends ConsumerState<SongStatsTable> {
                       message: stat.starts == 0
                           ? 'Not started in this period'
                           : '${stat.skips} of ${stat.starts} starts',
-                      child: Text('${stat.skips}',
-                          textAlign: TextAlign.end, style: number(stat.skips)),
+                      child: Text(
+                        '${stat.skips}',
+                        textAlign: TextAlign.end,
+                        style: number(stat.skips),
+                      ),
                     ),
                   ),
                   SizedBox(

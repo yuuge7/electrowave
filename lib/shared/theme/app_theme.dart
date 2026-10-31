@@ -58,8 +58,8 @@ class ElectrowaveColors extends ThemeExtension<ElectrowaveColors> {
     border: Colors.black12,
     textPrimary: Color(0xFF101014),
     textSecondary: Color(0xFF44464F),
-    textFaint: Color(0xFF77797F),
-    accent: Color(0xFF00A152),
+    textFaint: Color(0xFF62646D),
+    accent: Color(0xFF00783D),
     onAccent: Colors.white,
   );
 
@@ -112,8 +112,9 @@ extension ElectrowaveTheme on BuildContext {
 }
 
 ThemeData buildAppTheme(Brightness brightness) {
-  final palette =
-      brightness == Brightness.dark ? ElectrowaveColors.dark : ElectrowaveColors.light;
+  final palette = brightness == Brightness.dark
+      ? ElectrowaveColors.dark
+      : ElectrowaveColors.light;
 
   return ThemeData(
     brightness: brightness,
@@ -132,7 +133,7 @@ ThemeData buildAppTheme(Brightness brightness) {
 }
 
 ThemeMode toFlutterThemeMode(AppThemeMode mode) => switch (mode) {
-      AppThemeMode.system => ThemeMode.system,
-      AppThemeMode.light => ThemeMode.light,
-      AppThemeMode.dark => ThemeMode.dark,
-    };
+  AppThemeMode.system => ThemeMode.system,
+  AppThemeMode.light => ThemeMode.light,
+  AppThemeMode.dark => ThemeMode.dark,
+};

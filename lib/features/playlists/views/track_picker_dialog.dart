@@ -142,17 +142,17 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
 
   /// The rows the list is actually showing, after the filter chips.
   List<db.Track> _visible(List<db.Track> tracks, Set<int> alreadyIn) => [
-        for (final track in tracks)
-          if (!(_selectedOnly && !_selectedLookup.contains(track.id)) &&
-              !(_hideAdded && alreadyIn.contains(track.id)))
-            track,
-      ];
+    for (final track in tracks)
+      if (!(_selectedOnly && !_selectedLookup.contains(track.id)) &&
+          !(_hideAdded && alreadyIn.contains(track.id)))
+        track,
+  ];
 
   /// Of those, the ones that can still be added.
   List<db.Track> _selectable(List<db.Track> visible, Set<int> alreadyIn) => [
-        for (final track in visible)
-          if (!alreadyIn.contains(track.id)) track,
-      ];
+    for (final track in visible)
+      if (!alreadyIn.contains(track.id)) track,
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -162,7 +162,7 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
     final alreadyIn = widget.playlistId == null
         ? const <int>{}
         : ref.watch(playlistTrackIdsProvider(widget.playlistId!)).value ??
-            const <int>{};
+              const <int>{};
 
     final libraryAsync = ref.watch(
       trackPickerLibraryProvider((search: _search, sort: _sort)),
@@ -185,12 +185,19 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
             Expanded(
               child: libraryAsync.when(
                 data: (tracks) => _list(
-                    colors, tracks, _visible(tracks, alreadyIn), alreadyIn),
+                  colors,
+                  tracks,
+                  _visible(tracks, alreadyIn),
+                  alreadyIn,
+                ),
                 loading: () => Center(
-                    child: CircularProgressIndicator(color: colors.accent)),
+                  child: CircularProgressIndicator(color: colors.accent),
+                ),
                 error: (err, stack) => Center(
-                  child: Text('Could not load the library: $err',
-                      style: const TextStyle(color: Colors.red)),
+                  child: Text(
+                    'Could not load the library: $err',
+                    style: const TextStyle(color: Colors.red),
+                  ),
                 ),
               ),
             ),
@@ -267,14 +274,20 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                     isDense: true,
                     hintText: 'Search title, artist or album',
                     hintStyle: TextStyle(color: colors.textFaint),
-                    prefixIcon:
-                        Icon(Icons.search, color: colors.textFaint, size: 18),
+                    prefixIcon: Icon(
+                      Icons.search,
+                      color: colors.textFaint,
+                      size: 18,
+                    ),
                     suffixIcon: _searchController.text.isEmpty
                         ? null
                         : IconButton(
                             tooltip: 'Clear search',
-                            icon: Icon(Icons.clear,
-                                color: colors.textFaint, size: 18),
+                            icon: Icon(
+                              Icons.clear,
+                              color: colors.textFaint,
+                              size: 18,
+                            ),
                             onPressed: () {
                               _searchController.clear();
                               _onSearchChanged('');
@@ -282,15 +295,19 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                             },
                           ),
                     enabledBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(color: colors.border)),
+                      borderSide: BorderSide(color: colors.border),
+                    ),
                     focusedBorder: UnderlineInputBorder(
-                        borderSide: BorderSide(color: colors.accent)),
+                      borderSide: BorderSide(color: colors.accent),
+                    ),
                   ),
                 ),
               ),
               const SizedBox(width: 16),
-              Text('Sort',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              Text(
+                'Sort',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
               const SizedBox(width: 8),
               DropdownButton<db.LibrarySort>(
                 value: _sort,
@@ -462,8 +479,10 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                     "Can't play this song: $error",
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        const TextStyle(color: Colors.redAccent, fontSize: 12),
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 12,
+                    ),
                   )
                 : _previewSeekBar(colors, _preview.player),
           ),
@@ -471,13 +490,14 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
           if (added)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text('In playlist',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              child: Text(
+                'In playlist',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
             )
           else
             TextButton.icon(
-              onPressed: () =>
-                  setState(() => _setSelected(track.id, !checked)),
+              onPressed: () => setState(() => _setSelected(track.id, !checked)),
               icon: Icon(
                 checked ? Icons.check_box : Icons.check_box_outline_blank,
                 size: 18,
@@ -523,8 +543,10 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                 : 1.0;
             return Row(
               children: [
-                Text(_formatDurationMs(position.inMilliseconds),
-                    style: timeStyle),
+                Text(
+                  _formatDurationMs(position.inMilliseconds),
+                  style: timeStyle,
+                ),
                 Expanded(
                   child: Slider(
                     activeColor: colors.accent,
@@ -533,12 +555,15 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                     max: end,
                     onChanged: duration == Duration.zero
                         ? null
-                        : (value) => _preview
-                            .seek(Duration(milliseconds: value.toInt())),
+                        : (value) => _preview.seek(
+                            Duration(milliseconds: value.toInt()),
+                          ),
                   ),
                 ),
-                Text(_formatDurationMs(duration.inMilliseconds),
-                    style: timeStyle),
+                Text(
+                  _formatDurationMs(duration.inMilliseconds),
+                  style: timeStyle,
+                ),
               ],
             );
           },
@@ -547,16 +572,20 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
     );
   }
 
-  Widget _list(ElectrowaveColors colors, List<db.Track> tracks,
-      List<db.Track> visible, Set<int> alreadyIn) {
+  Widget _list(
+    ElectrowaveColors colors,
+    List<db.Track> tracks,
+    List<db.Track> visible,
+    Set<int> alreadyIn,
+  ) {
     if (visible.isEmpty) {
       return Center(
         child: Text(
           _selectedOnly
               ? 'Nothing selected yet.'
               : tracks.isEmpty && _search.trim().isEmpty
-                  ? 'Your library is empty. Scan a folder first.'
-                  : 'No songs match that search.',
+              ? 'Your library is empty. Scan a folder first.'
+              : 'No songs match that search.',
           style: TextStyle(color: colors.textFaint),
         ),
       );
@@ -583,8 +612,11 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                   SizedBox(
                     width: 36,
                     child: added
-                        ? Icon(Icons.check_circle,
-                            color: colors.textFaint, size: 18)
+                        ? Icon(
+                            Icons.check_circle,
+                            color: colors.textFaint,
+                            size: 18,
+                          )
                         : Checkbox(
                             value: checked,
                             visualDensity: VisualDensity.compact,
@@ -607,8 +639,9 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color:
-                                added ? colors.textFaint : colors.textPrimary,
+                            color: added
+                                ? colors.textFaint
+                                : colors.textPrimary,
                             fontSize: 13,
                           ),
                         ),
@@ -616,8 +649,10 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                           '${track.artist} — ${track.album}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style:
-                              TextStyle(color: colors.textFaint, fontSize: 11),
+                          style: TextStyle(
+                            color: colors.textFaint,
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ),
@@ -639,9 +674,13 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
   }
 
   Widget _footer(
-      ElectrowaveColors colors, List<db.Track> visible, Set<int> alreadyIn) {
+    ElectrowaveColors colors,
+    List<db.Track> visible,
+    Set<int> alreadyIn,
+  ) {
     final selectable = _selectable(visible, alreadyIn);
-    final allChosen = selectable.isNotEmpty &&
+    final allChosen =
+        selectable.isNotEmpty &&
         selectable.every((track) => _selectedLookup.contains(track.id));
 
     return Padding(
@@ -652,12 +691,15 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
             onPressed: selectable.isEmpty
                 ? null
                 : () => setState(() {
-                      for (final track in selectable) {
-                        _setSelected(track.id, !allChosen);
-                      }
-                    }),
-            icon: Icon(allChosen ? Icons.remove_done : Icons.done_all,
-                size: 16, color: colors.textSecondary),
+                    for (final track in selectable) {
+                      _setSelected(track.id, !allChosen);
+                    }
+                  }),
+            icon: Icon(
+              allChosen ? Icons.remove_done : Icons.done_all,
+              size: 16,
+              color: colors.textSecondary,
+            ),
             label: Text(
               allChosen
                   ? 'Deselect these ${selectable.length}'
@@ -672,8 +714,10 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
                 _selectedLookup.clear();
                 _anchorIndex = null;
               }),
-              child: Text('Clear selection',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              child: Text(
+                'Clear selection',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
             ),
           const Spacer(),
           Text(
@@ -694,9 +738,11 @@ class _TrackPickerDialogState extends ConsumerState<TrackPickerDialog> {
             onPressed: _selected.isEmpty
                 ? null
                 : () => Navigator.pop(context, List<int>.of(_selected)),
-            child: Text(_selected.isEmpty
-                ? widget.confirmLabel
-                : '${widget.confirmLabel} ${_selected.length}'),
+            child: Text(
+              _selected.isEmpty
+                  ? widget.confirmLabel
+                  : '${widget.confirmLabel} ${_selected.length}',
+            ),
           ),
         ],
       ),

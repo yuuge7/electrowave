@@ -4,9 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:electrowave/core/database/app_database.dart';
 
-Future<int> _insertTrack(AppDatabase db, String title,
-    {int durationMs = 200000, bool deleted = false}) {
-  return db.into(db.tracks).insert(
+Future<int> _insertTrack(
+  AppDatabase db,
+  String title, {
+  int durationMs = 200000,
+  bool deleted = false,
+}) {
+  return db
+      .into(db.tracks)
+      .insert(
         TracksCompanion.insert(
           filePath: 'C:/music/$title.mp3',
           title: title,
@@ -22,12 +28,15 @@ Future<void> _play(AppDatabase db, int trackId, DateTime at) => db
     .into(db.playbackHistory)
     .insert(PlaybackHistoryCompanion.insert(trackId: trackId, playedAt: at));
 
-Future<void> _listen(AppDatabase db, int trackId, DateTime at, int ms) =>
-    db.into(db.listeningSessions).insert(ListeningSessionsCompanion(
-          trackId: Value(trackId),
-          startedAt: Value(at),
-          listenedMs: Value(ms),
-        ));
+Future<void> _listen(AppDatabase db, int trackId, DateTime at, int ms) => db
+    .into(db.listeningSessions)
+    .insert(
+      ListeningSessionsCompanion(
+        trackId: Value(trackId),
+        startedAt: Value(at),
+        listenedMs: Value(ms),
+      ),
+    );
 
 void main() {
   late AppDatabase db;
@@ -94,8 +103,7 @@ void main() {
     expect(a.firstPlayed, may);
     expect(a.lastPlayed, mayLater);
 
-    final empty =
-        await db.watchSongStats(from: DateTime(2026, 6)).first;
+    final empty = await db.watchSongStats(from: DateTime(2026, 6)).first;
     expect(empty.single.plays, 0);
     expect(empty.single.listenedMs, 0);
   });

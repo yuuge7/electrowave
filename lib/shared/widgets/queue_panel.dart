@@ -1,3 +1,4 @@
+import '../../features/library/views/track_actions.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,8 +44,11 @@ class QueuePanel extends ConsumerWidget {
     VoidCallback? onTap,
     Widget? trailing,
   }) {
-    final placeholder =
-        Icon(Icons.music_note, color: colors.textFaint, size: 18);
+    final placeholder = Icon(
+      Icons.music_note,
+      color: colors.textFaint,
+      size: 18,
+    );
 
     return ListTile(
       dense: true,
@@ -138,12 +142,26 @@ class QueuePanel extends ConsumerWidget {
                     'Next in queue',
                     colors,
                     trailing: TextButton(
-                      onPressed: () =>
-                          ref.read(queueProvider.notifier).clearQueue(),
+                      onPressed: () {
+                        final before = ref.read(queueProvider);
+                        ref.read(queueProvider.notifier).clearQueue();
+                        showUndo(context, 'Queue cleared.', () async {
+                          final current = ref.read(queueProvider);
+                          ref
+                              .read(queueProvider.notifier)
+                              .replace(
+                                current.copyWith(
+                                  manualQueue: [
+                                    ...before.manualQueue,
+                                    ...current.manualQueue,
+                                  ],
+                                ),
+                              );
+                        });
+                      },
                       child: Text(
                         'Clear',
-                        style:
-                            TextStyle(color: colors.textFaint, fontSize: 12),
+                        style: TextStyle(color: colors.textFaint, fontSize: 12),
                       ),
                     ),
                   ),
@@ -170,12 +188,18 @@ class QueuePanel extends ConsumerWidget {
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.drag_handle,
-                                    color: colors.textFaint, size: 16),
+                                Icon(
+                                  Icons.drag_handle,
+                                  color: colors.textFaint,
+                                  size: 16,
+                                ),
                                 IconButton(
                                   tooltip: 'Remove from queue',
-                                  icon: Icon(Icons.close,
-                                      color: colors.textFaint, size: 16),
+                                  icon: Icon(
+                                    Icons.close,
+                                    color: colors.textFaint,
+                                    size: 16,
+                                  ),
                                   onPressed: () => ref
                                       .read(queueProvider.notifier)
                                       .removeFromQueue(entry.key),
@@ -190,15 +214,15 @@ class QueuePanel extends ConsumerWidget {
                 if (upcoming.isNotEmpty) ...[
                   _sectionHeader('Next up', colors),
                   ...upcoming.asMap().entries.map(
-                        (entry) => _trackTile(
-                          entry.value,
-                          colors,
-                          onTap: () => controller.playFromContext(
-                            queue.context,
-                            queue.contextIndex + 1 + entry.key,
-                          ),
-                        ),
+                    (entry) => _trackTile(
+                      entry.value,
+                      colors,
+                      onTap: () => controller.playFromContext(
+                        queue.context,
+                        queue.contextIndex + 1 + entry.key,
                       ),
+                    ),
+                  ),
                 ],
                 if (currentTrack == null &&
                     queue.manualQueue.isEmpty &&

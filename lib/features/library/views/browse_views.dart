@@ -9,6 +9,9 @@ import '../../../shared/theme/app_theme.dart';
 import '../../player/providers/player_provider.dart';
 import '../providers/library_provider.dart';
 import 'track_table.dart';
+import 'track_actions.dart';
+import '../../../main.dart';
+import '../../../shared/widgets/retry_message.dart';
 
 /// Album art thumbnail.
 ///
@@ -16,7 +19,12 @@ import 'track_table.dart';
 /// embedded art fails where a downscaled decode of the same file succeeds,
 /// which is what makes large covers fall back to the placeholder.
 class ArtThumb extends StatelessWidget {
-  const ArtThumb({super.key, required this.path, this.size = 48, this.radius = 8});
+  const ArtThumb({
+    super.key,
+    required this.path,
+    this.size = 48,
+    this.radius = 8,
+  });
 
   final String? path;
   final double size;
@@ -25,7 +33,11 @@ class ArtThumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
-    final placeholder = Icon(Icons.music_note, color: colors.textFaint, size: size * 0.5);
+    final placeholder = Icon(
+      Icons.music_note,
+      color: colors.textFaint,
+      size: size * 0.5,
+    );
 
     return Container(
       width: size,
@@ -40,7 +52,8 @@ class ArtThumb extends StatelessWidget {
           : Image.file(
               File(path!),
               fit: BoxFit.cover,
-              cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
+                  .round(),
               errorBuilder: (context, error, stackTrace) => placeholder,
             ),
     );
@@ -67,7 +80,10 @@ class AlbumsGrid extends ConsumerWidget {
       data: (albums) {
         if (albums.isEmpty) {
           return Center(
-            child: Text('No albums yet.', style: TextStyle(color: colors.textFaint)),
+            child: Text(
+              'No albums yet.',
+              style: TextStyle(color: colors.textFaint),
+            ),
           );
         }
         return GridView.builder(
@@ -83,9 +99,26 @@ class AlbumsGrid extends ConsumerWidget {
             final album = albums[index];
             return InkWell(
               borderRadius: BorderRadius.circular(12),
+              onSecondaryTapDown: (d) async {
+                final tracks = await ref
+                    .read(databaseProvider)
+                    .watchAlbumTracks(album.album, albumArtist: album.artist)
+                    .first;
+                if (context.mounted) {
+                  await showTrackActions(
+                    context,
+                    ref,
+                    tracks,
+                    d.globalPosition,
+                  );
+                }
+              },
               onTap: () => ref
                   .read(browseDetailProvider.notifier)
-                  .open(LibraryBrowseMode.albums, album.album),
+                  .open(
+                    LibraryBrowseMode.albums,
+                    '${album.album}\u0000${album.artist}',
+                  ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -118,9 +151,10 @@ class AlbumsGrid extends ConsumerWidget {
           },
         );
       },
-      loading: () => Center(child: CircularProgressIndicator(color: colors.accent)),
+      loading: () =>
+          Center(child: CircularProgressIndicator(color: colors.accent)),
       error: (err, stack) =>
-          Center(child: Text('Error: $err', style: const TextStyle(color: Colors.red))),
+          RetryMessage(onRetry: () => ref.invalidate(albumsProvider)),
     );
   }
 }
@@ -137,33 +171,57 @@ class ArtistsList extends ConsumerWidget {
       data: (artists) {
         if (artists.isEmpty) {
           return Center(
-            child: Text('No artists yet.', style: TextStyle(color: colors.textFaint)),
+            child: Text(
+              'No artists yet.',
+              style: TextStyle(color: colors.textFaint),
+            ),
           );
         }
         return ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 8),
           itemCount: artists.length,
-          separatorBuilder: (context, index) => Divider(color: colors.border, height: 1),
+          separatorBuilder: (context, index) =>
+              Divider(color: colors.border, height: 1),
           itemBuilder: (context, index) {
             final artist = artists[index];
-            return ListTile(
-              leading: ArtThumb(path: artist.coverArtPath),
-              title: Text(artist.artist, style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(
-                '${artist.albumCount} albums • ${artist.trackCount} tracks • '
-                '${formatTotalMs(artist.totalMs)}',
-                style: TextStyle(color: colors.textFaint, fontSize: 12),
+            return GestureDetector(
+              onSecondaryTapDown: (d) async {
+                final tracks = await ref
+                    .read(databaseProvider)
+                    .watchArtistTracks(artist.artist)
+                    .first;
+                if (context.mounted) {
+                  await showTrackActions(
+                    context,
+                    ref,
+                    tracks,
+                    d.globalPosition,
+                  );
+                }
+              },
+              child: ListTile(
+                leading: ArtThumb(path: artist.coverArtPath),
+                title: Text(
+                  artist.artist,
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  '${artist.albumCount} albums • ${artist.trackCount} tracks • '
+                  '${formatTotalMs(artist.totalMs)}',
+                  style: TextStyle(color: colors.textFaint, fontSize: 12),
+                ),
+                onTap: () => ref
+                    .read(browseDetailProvider.notifier)
+                    .open(LibraryBrowseMode.artists, artist.artist),
               ),
-              onTap: () => ref
-                  .read(browseDetailProvider.notifier)
-                  .open(LibraryBrowseMode.artists, artist.artist),
             );
           },
         );
       },
-      loading: () => Center(child: CircularProgressIndicator(color: colors.accent)),
+      loading: () =>
+          Center(child: CircularProgressIndicator(color: colors.accent)),
       error: (err, stack) =>
-          Center(child: Text('Error: $err', style: const TextStyle(color: Colors.red))),
+          RetryMessage(onRetry: () => ref.invalidate(artistsProvider)),
     );
   }
 }
@@ -180,34 +238,58 @@ class FoldersList extends ConsumerWidget {
       data: (folders) {
         if (folders.isEmpty) {
           return Center(
-            child: Text('No folders yet.', style: TextStyle(color: colors.textFaint)),
+            child: Text(
+              'No folders yet.',
+              style: TextStyle(color: colors.textFaint),
+            ),
           );
         }
         return ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 8),
           itemCount: folders.length,
-          separatorBuilder: (context, index) => Divider(color: colors.border, height: 1),
+          separatorBuilder: (context, index) =>
+              Divider(color: colors.border, height: 1),
           itemBuilder: (context, index) {
             final folder = folders[index];
-            return ListTile(
-              leading: Icon(Icons.folder, color: colors.accent),
-              title: Text(folder.name, style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(
-                '${folder.path} • ${folder.trackCount} tracks',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: colors.textFaint, fontSize: 12),
+            return GestureDetector(
+              onSecondaryTapDown: (d) async {
+                final tracks = await ref
+                    .read(databaseProvider)
+                    .watchFolderTracks(folder.path)
+                    .first;
+                if (context.mounted) {
+                  await showTrackActions(
+                    context,
+                    ref,
+                    tracks,
+                    d.globalPosition,
+                  );
+                }
+              },
+              child: ListTile(
+                leading: Icon(Icons.folder, color: colors.accent),
+                title: Text(
+                  folder.name,
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  '${folder.path} • ${folder.trackCount} tracks',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colors.textFaint, fontSize: 12),
+                ),
+                onTap: () => ref
+                    .read(browseDetailProvider.notifier)
+                    .open(LibraryBrowseMode.folders, folder.path),
               ),
-              onTap: () => ref
-                  .read(browseDetailProvider.notifier)
-                  .open(LibraryBrowseMode.folders, folder.path),
             );
           },
         );
       },
-      loading: () => Center(child: CircularProgressIndicator(color: colors.accent)),
+      loading: () =>
+          Center(child: CircularProgressIndicator(color: colors.accent)),
       error: (err, stack) =>
-          Center(child: Text('Error: $err', style: const TextStyle(color: Colors.red))),
+          RetryMessage(onRetry: () => ref.invalidate(foldersProvider)),
     );
   }
 }
@@ -304,9 +386,72 @@ class TrackListPage extends ConsumerWidget {
           ),
         ],
       ),
-      loading: () => Center(child: CircularProgressIndicator(color: colors.accent)),
-      error: (err, stack) =>
-          Center(child: Text('Error: $err', style: const TextStyle(color: Colors.red))),
+      loading: () =>
+          Center(child: CircularProgressIndicator(color: colors.accent)),
+      error: (err, stack) => RetryMessage(
+        onRetry: () {
+          ref.invalidate(albumTracksProvider);
+          ref.invalidate(artistTracksProvider);
+          ref.invalidate(folderTracksProvider);
+          ref.invalidate(smartListTracksProvider);
+          ref.invalidate(categoryTracksProvider);
+        },
+      ),
     );
+  }
+}
+
+final categoryTracksProvider =
+    StreamProvider.family<
+      List<db.Track>,
+      ({LibraryBrowseMode mode, String key})
+    >(
+      (ref, query) => query.mode == LibraryBrowseMode.genres
+          ? ref.watch(databaseProvider).watchGenre(query.key)
+          : ref.watch(databaseProvider).watchYear(int.parse(query.key)),
+    );
+
+class CategoriesList extends ConsumerWidget {
+  const CategoriesList({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(libraryBrowseModeProvider);
+    return ref
+        .watch(libraryProvider)
+        .when(
+          data: (tracks) {
+            final groups = <String, int>{};
+            for (final t in tracks) {
+              final key = mode == LibraryBrowseMode.genres
+                  ? t.genre
+                  : t.year?.toString();
+              if (key != null && key.isNotEmpty) {
+                groups[key] = (groups[key] ?? 0) + 1;
+              }
+            }
+            final keys = groups.keys.toList()..sort();
+            if (mode == LibraryBrowseMode.years) {
+              keys.sort((a, b) => b.compareTo(a));
+            }
+            return ListView.builder(
+              itemCount: keys.length,
+              itemBuilder: (context, index) => ListTile(
+                leading: Icon(
+                  mode == LibraryBrowseMode.genres
+                      ? Icons.category
+                      : Icons.calendar_today,
+                ),
+                title: Text(keys[index]),
+                subtitle: Text('${groups[keys[index]]} tracks'),
+                onTap: () => ref
+                    .read(browseDetailProvider.notifier)
+                    .open(mode, keys[index]),
+              ),
+            );
+          },
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (_, _) =>
+              RetryMessage(onRetry: () => ref.invalidate(libraryProvider)),
+        );
   }
 }

@@ -17,5 +17,6 @@ class NavIndexNotifier extends Notifier<int> {
   }
 }
 
-final navIndexProvider =
-    NotifierProvider<NavIndexNotifier, int>(NavIndexNotifier.new);
+final navIndexProvider = NotifierProvider<NavIndexNotifier, int>(
+  NavIndexNotifier.new,
+);

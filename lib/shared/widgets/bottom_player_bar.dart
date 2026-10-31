@@ -1,4 +1,4 @@
-import 'dart:io';
+import '../../features/library/views/browse_views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -14,348 +14,240 @@ import '../../main.dart';
 
 class BottomPlayerBar extends ConsumerWidget {
   const BottomPlayerBar({super.key});
-
-  String _formatDuration(Duration? duration) {
-    if (duration == null) return "00:00";
-    String twoDigits(int n) => n.toString().padLeft(2, "0");
-    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
-    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
-    return "$twoDigitMinutes:$twoDigitSeconds";
-  }
-
+  String _time(Duration duration) =>
+      '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final player = ref.watch(playerProvider);
+    final controller = ref.read(playbackControllerProvider);
     final engine = ref.read(audioEngineProvider);
-    final playerTrack = ref.watch(currentTrackProvider);
-
-    // The live row keeps the heart and any tag edit in step with the library
-    // without reopening the file.
-    final currentTrack = playerTrack == null
+    final snapshot = ref.watch(currentTrackProvider);
+    final track = snapshot == null
         ? null
-        : switch (ref.watch(liveTrackProvider(playerTrack.id))) {
-            AsyncData(:final value) => value ?? playerTrack,
-            _ => playerTrack,
-          };
-
-    return Container(
-      // Increased height slightly to give the internal elements more breathing room
-      height: 110,
-      // Using .all(16) gives it equal spacing on every side, perfectly centering it
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+        : ref.watch(liveTrackProvider(snapshot.id)).value ?? snapshot;
+    final info = Row(
+      children: [
+        ArtThumb(path: track?.coverArtPath, size: 44),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                track?.title ?? 'No track selected',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                track?.artist ?? 'Choose music from your library',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // 1. The Seek Bar (Progress Slider)
-          StreamBuilder<Duration>(
-            stream: player.stream.position,
-            builder: (context, positionSnapshot) {
-              return StreamBuilder<Duration>(
-                stream: player.stream.duration,
-                builder: (context, durationSnapshot) {
-                  final position = positionSnapshot.data ?? Duration.zero;
-                  final duration = durationSnapshot.data ?? Duration.zero;
-
-                  final maxDuration = duration.inMilliseconds > 0
-                      ? duration.inMilliseconds.toDouble()
-                      : 1.0;
-
-                  final currentPosition = position.inMilliseconds.toDouble().clamp(0.0, maxDuration);
-
-                  return Padding(
-                    // Added top padding here so the slider doesn't touch the top border
-                    padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 10.0),
-                    child: Row(
+        ),
+        if (track != null)
+          IconButton(
+            tooltip: track.isFavorite ? 'Remove favorite' : 'Favorite',
+            icon: Icon(
+              track.isFavorite ? Icons.favorite : Icons.favorite_border,
+              size: 20,
+            ),
+            color: track.isFavorite ? colors.accent : colors.textFaint,
+            onPressed: () => ref
+                .read(databaseProvider)
+                .setFavorite(track.id, !track.isFavorite),
+          ),
+      ],
+    );
+    final controls = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Shuffle',
+          isSelected: ref.watch(shuffleProvider),
+          onPressed: () => ref.read(shuffleProvider.notifier).toggle(),
+          icon: const Icon(Icons.shuffle, size: 20),
+        ),
+        IconButton(
+          tooltip: 'Previous track',
+          onPressed: controller.playPreviousTrack,
+          icon: const Icon(Icons.skip_previous),
+        ),
+        StreamBuilder<bool>(
+          stream: player.stream.playing,
+          initialData: player.state.playing,
+          builder: (_, s) => IconButton.filled(
+            tooltip: s.data == true ? 'Pause' : 'Play',
+            onPressed: () => player.playOrPause(),
+            icon: Icon(s.data == true ? Icons.pause : Icons.play_arrow),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Next track',
+          onPressed: controller.playNextTrack,
+          icon: const Icon(Icons.skip_next),
+        ),
+        IconButton(
+          tooltip: 'Repeat: ${ref.watch(repeatModeProvider).name}',
+          isSelected: ref.watch(repeatModeProvider) != PlaybackRepeatMode.off,
+          onPressed: () => ref.read(repeatModeProvider.notifier).cycle(),
+          icon: Icon(
+            ref.watch(repeatModeProvider) == PlaybackRepeatMode.one
+                ? Icons.repeat_one
+                : Icons.repeat,
+            size: 20,
+          ),
+        ),
+      ],
+    );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _SpeedButton(),
+        const _SleepTimerButton(),
+        IconButton(
+          tooltip: 'Show queue',
+          isSelected: ref.watch(queuePanelVisibleProvider),
+          onPressed: () =>
+              ref.read(queuePanelVisibleProvider.notifier).toggle(),
+          icon: const Icon(Icons.queue_music, size: 20),
+        ),
+        if (ref.watch(trayReadyProvider))
+          IconButton(
+            tooltip: 'Hide to tray',
+            onPressed: () => windowManager.hide(),
+            icon: const Icon(Icons.close_fullscreen, size: 20),
+          ),
+      ],
+    );
+    final volume = StreamBuilder<double>(
+      stream: player.stream.volume,
+      initialData: player.state.volume,
+      builder: (_, s) {
+        final value = (s.data ?? 100).clamp(0.0, 100.0);
+        return SizedBox(
+          width: 164,
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: value == 0 ? 'Unmute' : 'Mute',
+                onPressed: () => controller.setVolume(value == 0 ? 100 : 0),
+                icon: Icon(
+                  value == 0 ? Icons.volume_off : Icons.volume_up,
+                  size: 20,
+                ),
+              ),
+              Expanded(
+                child: Slider(
+                  value: value,
+                  max: 100,
+                  semanticFormatterCallback: (v) =>
+                      'Volume ${v.round()} percent',
+                  onChanged: controller.setVolume,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 1120;
+        return Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.border),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StreamBuilder<Duration>(
+                stream: player.stream.position,
+                initialData: player.state.position,
+                builder: (_, position) => StreamBuilder<Duration>(
+                  stream: player.stream.duration,
+                  initialData: player.state.duration,
+                  builder: (_, duration) {
+                    final max = (duration.data ?? Duration.zero).inMilliseconds
+                        .toDouble();
+                    final current = (position.data ?? Duration.zero)
+                        .inMilliseconds
+                        .toDouble()
+                        .clamp(0.0, max > 0 ? max : 1.0);
+                    return Row(
                       children: [
-                        Text(_formatDuration(position),
-                            style: TextStyle(color: colors.textFaint, fontSize: 12)),
+                        Text(
+                          _time(position.data ?? Duration.zero),
+                          style: TextStyle(
+                            color: colors.textFaint,
+                            fontSize: 12,
+                          ),
+                        ),
                         Expanded(
                           child: Slider(
-                            activeColor: colors.accent,
-                            inactiveColor: colors.border,
-                            value: currentPosition,
-                            max: maxDuration,
-                            onChanged: (value) {
-                              engine.noteUserActivity();
-                              player.seek(Duration(milliseconds: value.toInt()));
-                            },
-                          ),
-                        ),
-                        Text(_formatDuration(duration),
-                            style: TextStyle(color: colors.textFaint, fontSize: 12)),
-                      ],
-                    ),
-                  );
-                }
-              );
-            }
-          ),
-
-          // 2. Track Info, Playback, and Volume Controls
-          Expanded(
-            child: Padding(
-              // Kept horizontal padding, adjusted bottom padding to match the top visually
-              padding: const EdgeInsets.only(left: 20, right: 20, bottom: 8),
-              child: Row(
-                children: [
-                  // Left: Track Info with Cover Art
-                  Expanded(
-                    flex: 1,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: colors.surfaceAlt,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: currentTrack?.coverArtPath != null
-                              ? Image.file(
-                                  File(currentTrack!.coverArtPath!),
-                                  fit: BoxFit.cover,
-                                  cacheWidth: (48 *
-                                          MediaQuery.devicePixelRatioOf(context))
-                                      .round(),
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Icon(Icons.music_note,
-                                          color: colors.textFaint, size: 24),
-                                )
-                              : Icon(Icons.music_note,
-                                  color: colors.textFaint, size: 24),
-                        ),
-                        const SizedBox(width: 12),
-
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(currentTrack?.title ?? 'No Track',
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontWeight: FontWeight.bold),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(currentTrack?.artist ?? 'Select a track',
-                                style: TextStyle(color: colors.textFaint, fontSize: 12),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        // Favourite the playing track without hunting for it
-                        // in the library.
-                        if (currentTrack != null)
-                          IconButton(
-                            tooltip: currentTrack.isFavorite
-                                ? 'Remove from favorites'
-                                : 'Add to favorites',
-                            icon: Icon(
-                              currentTrack.isFavorite
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              size: 20,
-                            ),
-                            color: currentTrack.isFavorite
-                                ? colors.accent
-                                : colors.textFaint,
-                            onPressed: () => ref
-                                .read(databaseProvider)
-                                .setFavorite(
-                                    currentTrack.id, !currentTrack.isFavorite),
-                          ),
-                      ],
-                    ),
-                  ),
-
-                  // Center: Full Playback Controls
-                  Expanded(
-                    flex: 2,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Consumer(builder: (context, ref, _) {
-                          final isShuffle = ref.watch(shuffleProvider);
-                          return IconButton(
-                            icon: const Icon(Icons.shuffle),
-                            color: isShuffle ? colors.accent : colors.textFaint,
-                            onPressed: () {
-                              engine.noteUserActivity();
-                              ref.read(shuffleProvider.notifier).toggle();
-                            },
-                          );
-                        }),
-
-                        IconButton(
-                          icon: const Icon(Icons.skip_previous),
-                          color: colors.textPrimary,
-                          onPressed: () {
-                            engine.noteUserActivity();
-                            ref.read(playbackControllerProvider).playPreviousTrack();
-                          },
-                        ),
-
-                        StreamBuilder<bool>(
-                          stream: player.stream.playing,
-                          builder: (context, snapshot) {
-                            final isPlaying = snapshot.data ?? false;
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                              child: IconButton(
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                iconSize: 45,
-                                icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill),
-                                color: colors.accent,
-                                onPressed: () {
-                                  engine.noteUserActivity();
-                                  if (isPlaying) {
-                                    player.pause();
-                                  } else {
-                                    player.play();
-                                  }
-                                },
-                              ),
-                            );
-                          },
-                        ),
-
-                        IconButton(
-                          icon: const Icon(Icons.skip_next),
-                          color: colors.textPrimary,
-                          onPressed: () {
-                            engine.noteUserActivity();
-                            ref.read(playbackControllerProvider).playNextTrack();
-                          },
-                        ),
-
-                        Consumer(builder: (context, ref, _) {
-                          final repeatMode = ref.watch(repeatModeProvider);
-                          IconData icon = Icons.repeat;
-                          Color color = colors.textFaint;
-
-                          if (repeatMode == PlaybackRepeatMode.all) {
-                            color = colors.accent;
-                          } else if (repeatMode == PlaybackRepeatMode.one) {
-                            icon = Icons.repeat_one;
-                            color = colors.accent;
-                          }
-
-                          return IconButton(
-                            icon: Icon(icon),
-                            color: color,
-                            onPressed: () {
-                              engine.noteUserActivity();
-                              ref.read(repeatModeProvider.notifier).cycle();
-                            },
-                          );
-                        }),
-                      ],
-                    ),
-                  ),
-
-                  // Right: Volume Control
-                  Expanded(
-                    flex: 1,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        const _SpeedButton(),
-                        const _SleepTimerButton(),
-
-                        // Queue panel toggle (like Spotify's queue button)
-                        Consumer(builder: (context, ref, _) {
-                          final queueVisible =
-                              ref.watch(queuePanelVisibleProvider);
-                          return IconButton(
-                            tooltip: 'Queue',
-                            icon: const Icon(Icons.queue_music, size: 22),
-                            color:
-                                queueVisible ? colors.accent : colors.textFaint,
-                            onPressed: () => ref
-                                .read(queuePanelVisibleProvider.notifier)
-                                .toggle(),
-                          );
-                        }),
-
-                        StreamBuilder<double>(
-                          stream: player.stream.volume,
-                          builder: (context, snapshot) {
-                            final volume = snapshot.data ?? 100.0;
-                            IconData volumeIcon = Icons.volume_up;
-                            if (volume == 0) {
-                              volumeIcon = Icons.volume_off;
-                            } else if (volume < 50) {
-                              volumeIcon = Icons.volume_down;
-                            }
-
-                            return Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: Icon(volumeIcon, color: colors.textFaint),
-                                  onPressed: () {
+                            value: current,
+                            max: max > 0 ? max : 1,
+                            semanticFormatterCallback: (v) =>
+                                'Seek to ${_time(Duration(milliseconds: v.round()))}',
+                            onChanged: max <= 0
+                                ? null
+                                : (v) {
                                     engine.noteUserActivity();
-                                    player.setVolume(volume == 0.0 ? 100.0 : 0.0);
+                                    controller.seek(
+                                      Duration(milliseconds: v.round()),
+                                    );
                                   },
-                                ),
-                                SizedBox(
-                                  width: 100,
-                                  child: Slider(
-                                    activeColor: colors.textPrimary,
-                                    inactiveColor: colors.border,
-                                    value: volume.clamp(0.0, 100.0),
-                                    max: 100.0,
-                                    onChanged: (value) {
-                                      engine.noteUserActivity();
-                                      player.setVolume(value);
-                                    },
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
+                          ),
                         ),
-
-                        // Hide to tray: window disappears, music keeps
-                        // playing, tray icon brings it back (like Spotify)
-                        Consumer(builder: (context, ref, _) {
-                          final trayReady = ref.watch(trayReadyProvider);
-                          if (!trayReady) return const SizedBox.shrink();
-                          return IconButton(
-                            tooltip: 'Hide to tray (keeps playing)',
-                            icon: const Icon(Icons.close_fullscreen, size: 20),
+                        Text(
+                          _time(duration.data ?? Duration.zero),
+                          style: TextStyle(
                             color: colors.textFaint,
-                            onPressed: () => windowManager.hide(),
-                          );
-                        }),
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
-                    ),
-                  ),
-                ],
+                    );
+                  },
+                ),
               ),
-            ),
+              if (compact) ...[
+                Row(
+                  children: [
+                    Expanded(child: info),
+                    actions,
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [controls, const SizedBox(width: 16), volume],
+                ),
+              ] else
+                Row(
+                  children: [
+                    Expanded(child: info),
+                    controls,
+                    const SizedBox(width: 12),
+                    actions,
+                    volume,
+                  ],
+                ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -371,7 +263,8 @@ class _SpeedButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final rate = ref.watch(
-        settingsControllerProvider.select((settings) => settings.playbackRate));
+      settingsControllerProvider.select((settings) => settings.playbackRate),
+    );
 
     return PopupMenuButton<double>(
       tooltip: 'Playback speed',
@@ -438,10 +331,12 @@ class _SleepTimerButton extends ConsumerWidget {
           decoration: InputDecoration(
             labelText: 'Minutes',
             labelStyle: TextStyle(color: colors.textFaint),
-            enabledBorder:
-                UnderlineInputBorder(borderSide: BorderSide(color: colors.border)),
-            focusedBorder:
-                UnderlineInputBorder(borderSide: BorderSide(color: colors.accent)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: colors.border),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: colors.accent),
+            ),
           ),
         ),
         actions: [
@@ -452,9 +347,13 @@ class _SleepTimerButton extends ConsumerWidget {
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, int.tryParse(controller.text.trim())),
-            child: Text('Start',
-                style: TextStyle(
-                    color: colors.accent, fontWeight: FontWeight.bold)),
+            child: Text(
+              'Start',
+              style: TextStyle(
+                color: colors.accent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -497,21 +396,27 @@ class _SleepTimerButton extends ConsumerWidget {
         if (timer != null) ...[
           PopupMenuItem(
             value: 'extend',
-            child: Text('+15 minutes',
-                style: TextStyle(color: colors.textSecondary)),
+            child: Text(
+              '+15 minutes',
+              style: TextStyle(color: colors.textSecondary),
+            ),
           ),
           PopupMenuItem(
             value: 'cancel',
-            child: Text('Cancel timer',
-                style: TextStyle(color: colors.textSecondary)),
+            child: Text(
+              'Cancel timer',
+              style: TextStyle(color: colors.textSecondary),
+            ),
           ),
           const PopupMenuDivider(),
         ],
         for (final minutes in [15, 30, 45, 60])
           PopupMenuItem(
             value: '$minutes',
-            child: Text('$minutes minutes',
-                style: TextStyle(color: colors.textSecondary)),
+            child: Text(
+              '$minutes minutes',
+              style: TextStyle(color: colors.textSecondary),
+            ),
           ),
         PopupMenuItem(
           value: 'custom',
@@ -519,8 +424,10 @@ class _SleepTimerButton extends ConsumerWidget {
         ),
         PopupMenuItem(
           value: 'end_of_track',
-          child: Text('End of current track',
-              style: TextStyle(color: colors.textSecondary)),
+          child: Text(
+            'End of current track',
+            style: TextStyle(color: colors.textSecondary),
+          ),
         ),
       ],
       child: Padding(
@@ -528,19 +435,20 @@ class _SleepTimerButton extends ConsumerWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.bedtime,
-                size: 20,
-                color: timer == null ? colors.textFaint : colors.accent),
+            Icon(
+              Icons.bedtime,
+              size: 20,
+              color: timer == null ? colors.textFaint : colors.accent,
+            ),
             if (timer != null) ...[
               const SizedBox(width: 4),
               Text(
-                timer.endOfTrack
-                    ? 'End'
-                    : _formatRemaining(timer.remaining),
+                timer.endOfTrack ? 'End' : _formatRemaining(timer.remaining),
                 style: TextStyle(
-                    color: colors.accent,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold),
+                  color: colors.accent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ],

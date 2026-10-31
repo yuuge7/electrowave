@@ -89,9 +89,9 @@ class SessionController {
 
     final Map<int, db.Track> byId = {};
     if (ids.isNotEmpty) {
-      final rows = await (database.select(database.tracks)
-            ..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false)))
-          .get();
+      final rows = await (database.select(
+        database.tracks,
+      )..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false))).get();
       for (final track in rows) {
         byId[track.id] = track;
       }
@@ -107,7 +107,9 @@ class SessionController {
         if (byId[id] != null) byId[id]!,
     ];
 
-    ref.read(queueProvider.notifier).restore(
+    ref
+        .read(queueProvider.notifier)
+        .restore(
           context: context,
           contextIndex: remapContextIndex(
             savedIds: snapshot.contextTrackIds,
@@ -120,15 +122,20 @@ class SessionController {
         );
 
     ref.read(shuffleProvider.notifier).set(snapshot.shuffle);
-    ref.read(repeatModeProvider.notifier).set(_parseRepeatMode(snapshot.repeatMode));
+    ref
+        .read(repeatModeProvider.notifier)
+        .set(_parseRepeatMode(snapshot.repeatMode));
     ref.read(navIndexProvider.notifier).set(snapshot.navIndex);
-    ref.read(queuePanelVisibleProvider.notifier).set(snapshot.queuePanelVisible);
+    ref
+        .read(queuePanelVisibleProvider.notifier)
+        .set(snapshot.queuePanelVisible);
 
     // Only reopen a playlist that still exists.
     if (snapshot.selectedPlaylistId != null) {
-      final playlist = await (database.select(database.playlists)
-            ..where((pl) => pl.id.equals(snapshot.selectedPlaylistId!)))
-          .getSingleOrNull();
+      final playlist =
+          await (database.select(database.playlists)
+                ..where((pl) => pl.id.equals(snapshot.selectedPlaylistId!)))
+              .getSingleOrNull();
       if (playlist != null) {
         ref.read(selectedPlaylistIdProvider.notifier).select(playlist.id);
       }
@@ -145,7 +152,9 @@ class SessionController {
     // "next" still works.
     if (track == null || !File(track.filePath).existsSync()) {
       if (track != null) {
-        debugPrint('Session: file missing for "${track.title}", skipping reload.');
+        debugPrint(
+          'Session: file missing for "${track.title}", skipping reload.',
+        );
       }
       return;
     }
@@ -159,7 +168,7 @@ class SessionController {
 
     // `start` makes mpv load the file already positioned; opening with
     // play: false leaves it paused where the user left off.
-    await player.open(Media(track.filePath, start: start), play: false);
+    await ref.read(playbackControllerProvider).restoreTrack(track, start);
 
     if (start > const Duration(seconds: 2)) {
       unawaited(_ensureSeeked(player, start));
@@ -221,12 +230,14 @@ class SessionController {
 
     final player = ref.read(playerProvider);
 
-    _subscriptions.add(player.stream.position.listen((position) {
-      final delta = (position.inMilliseconds - _lastSavedPositionMs).abs();
-      if (delta < _positionSaveInterval.inMilliseconds) return;
-      _lastSavedPositionMs = position.inMilliseconds;
-      _scheduleSave();
-    }));
+    _subscriptions.add(
+      player.stream.position.listen((position) {
+        final delta = (position.inMilliseconds - _lastSavedPositionMs).abs();
+        if (delta < _positionSaveInterval.inMilliseconds) return;
+        _lastSavedPositionMs = position.inMilliseconds;
+        _scheduleSave();
+      }),
+    );
 
     // Pausing is a good moment to persist the exact position.
     _subscriptions.add(player.stream.playing.listen((_) => _scheduleSave()));

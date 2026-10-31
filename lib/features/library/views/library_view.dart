@@ -2,19 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart' as db;
-import '../../../main.dart';
+import '../../../shared/widgets/retry_message.dart';
+import '../providers/scan_provider.dart';
 import '../../../shared/theme/app_theme.dart';
-import '../../player/services/metadata_scanner.dart';
 import '../providers/library_provider.dart';
 import 'browse_views.dart';
 import 'track_table.dart';
+
+final searchFocusProvider = Provider<FocusNode>((ref) {
+  final node = FocusNode(debugLabel: 'Library search');
+  ref.onDispose(node.dispose);
+  return node;
+});
 
 class LibraryView extends ConsumerWidget {
   const LibraryView({super.key});
 
   void _showScanSheet(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
-    final database = ref.read(databaseProvider);
 
     showModalBottomSheet(
       context: context,
@@ -28,24 +33,32 @@ class LibraryView extends ConsumerWidget {
           children: [
             ListTile(
               leading: Icon(Icons.create_new_folder, color: colors.accent),
-              title: Text('Scan Entire Folder',
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text('Finds all music in a directory',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              title: Text(
+                'Scan Entire Folder',
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              subtitle: Text(
+                'Finds all music in a directory',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
               onTap: () async {
                 Navigator.pop(context);
-                await MetadataScanner(database).scanDirectory();
+                await ref.read(scanProvider.notifier).addFolder();
               },
             ),
             ListTile(
               leading: Icon(Icons.queue_music, color: colors.accent),
-              title: Text('Add Specific Files',
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text('Select individual tracks to add',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              title: Text(
+                'Add Specific Files',
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              subtitle: Text(
+                'Select individual tracks to add',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
               onTap: () async {
                 Navigator.pop(context);
-                await MetadataScanner(database).scanSpecificFiles();
+                await ref.read(scanProvider.notifier).addFiles();
               },
             ),
           ],
@@ -57,6 +70,7 @@ class LibraryView extends ConsumerWidget {
   Widget _searchField(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     return TextField(
+      focusNode: ref.watch(searchFocusProvider),
       style: TextStyle(color: colors.textPrimary),
       decoration: InputDecoration(
         hintText: 'Search songs, artists, or albums...',
@@ -94,21 +108,35 @@ class LibraryView extends ConsumerWidget {
         SegmentedButton<LibraryBrowseMode>(
           segments: const [
             ButtonSegment(
-                value: LibraryBrowseMode.tracks,
-                icon: Icon(Icons.music_note),
-                label: Text('Tracks')),
+              value: LibraryBrowseMode.tracks,
+              icon: Icon(Icons.music_note),
+              label: Text('Tracks'),
+            ),
             ButtonSegment(
-                value: LibraryBrowseMode.albums,
-                icon: Icon(Icons.album),
-                label: Text('Albums')),
+              value: LibraryBrowseMode.albums,
+              icon: Icon(Icons.album),
+              label: Text('Albums'),
+            ),
             ButtonSegment(
-                value: LibraryBrowseMode.artists,
-                icon: Icon(Icons.person),
-                label: Text('Artists')),
+              value: LibraryBrowseMode.artists,
+              icon: Icon(Icons.person),
+              label: Text('Artists'),
+            ),
             ButtonSegment(
-                value: LibraryBrowseMode.folders,
-                icon: Icon(Icons.folder),
-                label: Text('Folders')),
+              value: LibraryBrowseMode.folders,
+              icon: Icon(Icons.folder),
+              label: Text('Folders'),
+            ),
+            ButtonSegment(
+              value: LibraryBrowseMode.genres,
+              icon: Icon(Icons.category),
+              label: Text('Genres'),
+            ),
+            ButtonSegment(
+              value: LibraryBrowseMode.years,
+              icon: Icon(Icons.calendar_today),
+              label: Text('Years'),
+            ),
           ],
           selected: {mode},
           showSelectedIcon: false,
@@ -133,11 +161,15 @@ class LibraryView extends ConsumerWidget {
                       Icon(
                         option == sort ? Icons.check : Icons.sort,
                         size: 16,
-                        color: option == sort ? colors.accent : colors.textFaint,
+                        color: option == sort
+                            ? colors.accent
+                            : colors.textFaint,
                       ),
                       const SizedBox(width: 8),
-                      Text(librarySortLabel(option),
-                          style: TextStyle(color: colors.textSecondary)),
+                      Text(
+                        librarySortLabel(option),
+                        style: TextStyle(color: colors.textSecondary),
+                      ),
                     ],
                   ),
                 ),
@@ -154,8 +186,10 @@ class LibraryView extends ConsumerWidget {
                 children: [
                   Icon(Icons.sort, size: 16, color: colors.textFaint),
                   const SizedBox(width: 8),
-                  Text('Sort: ${librarySortLabel(sort)}',
-                      style: TextStyle(color: colors.textSecondary)),
+                  Text(
+                    'Sort: ${librarySortLabel(sort)}',
+                    style: TextStyle(color: colors.textSecondary),
+                  ),
                 ],
               ),
             ),
@@ -204,8 +238,7 @@ class LibraryView extends ConsumerWidget {
           SmartList.mostPlayed => 'Your most played tracks',
         },
         tracksAsync: ref.watch(smartListTracksProvider(smartList)),
-        onBack: () =>
-            ref.read(selectedSmartListProvider.notifier).select(null),
+        onBack: () => ref.read(selectedSmartListProvider.notifier).select(null),
       );
     }
 
@@ -215,8 +248,10 @@ class LibraryView extends ConsumerWidget {
       switch (detail.mode) {
         case LibraryBrowseMode.albums:
           return TrackListPage(
-            title: detail.key,
-            subtitle: 'Album',
+            title: detail.key.split('\u0000').first,
+            subtitle: detail.key.split('\u0000').length > 1
+                ? detail.key.split('\u0000')[1]
+                : 'Album',
             tracksAsync: ref.watch(albumTracksProvider(detail.key)),
             onBack: close,
             showAlbum: false,
@@ -235,6 +270,18 @@ class LibraryView extends ConsumerWidget {
             tracksAsync: ref.watch(folderTracksProvider(detail.key)),
             onBack: close,
           );
+        case LibraryBrowseMode.genres:
+        case LibraryBrowseMode.years:
+          return TrackListPage(
+            title: detail.key,
+            subtitle: detail.mode == LibraryBrowseMode.genres
+                ? 'Genre'
+                : 'Year',
+            tracksAsync: ref.watch(
+              categoryTracksProvider((mode: detail.mode, key: detail.key)),
+            ),
+            onBack: close,
+          );
         case LibraryBrowseMode.tracks:
           ref.read(browseDetailProvider.notifier).close();
       }
@@ -247,15 +294,56 @@ class LibraryView extends ConsumerWidget {
         return const ArtistsList();
       case LibraryBrowseMode.folders:
         return const FoldersList();
+      case LibraryBrowseMode.genres:
+      case LibraryBrowseMode.years:
+        return const CategoriesList();
       case LibraryBrowseMode.tracks:
         final libraryAsync = ref.watch(libraryProvider);
         return libraryAsync.when(
-          data: (tracks) => TrackTable(tracks: tracks),
+          data: (tracks) =>
+              tracks.isEmpty && ref.watch(searchQueryProvider).isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.library_music_outlined,
+                        size: 64,
+                        color: context.colors.accent,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Your music. Your library.',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Add a folder to begin. Your files stay on this computer.',
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        onPressed: () =>
+                            ref.read(scanProvider.notifier).addFolder(),
+                        icon: const Icon(Icons.create_new_folder_outlined),
+                        label: const Text('Add your music folder'),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Drop files or folders into this window. Double-click a track to play.\nCtrl+F searches. Press ? for keyboard shortcuts.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : TrackTable(tracks: tracks),
           loading: () => Center(
-              child: CircularProgressIndicator(color: context.colors.accent)),
-          error: (err, stack) => Center(
-              child:
-                  Text('Error: $err', style: const TextStyle(color: Colors.red))),
+            child: CircularProgressIndicator(color: context.colors.accent),
+          ),
+          error: (err, stack) =>
+              RetryMessage(onRetry: () => ref.invalidate(libraryProvider)),
         );
     }
   }
@@ -268,24 +356,61 @@ class LibraryView extends ConsumerWidget {
       backgroundColor: colors.background,
       floatingActionButton: FloatingActionButton(
         backgroundColor: colors.accent,
+        tooltip: 'Add music',
         onPressed: () => _showScanSheet(context, ref),
         child: Icon(Icons.add, color: colors.onAccent),
       ),
       body: Column(
         children: [
           Padding(
-            padding:
-                const EdgeInsets.only(left: 16, right: 16, top: 24, bottom: 8),
+            padding: const EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 24,
+              bottom: 8,
+            ),
             child: _searchField(context, ref),
           ),
           Padding(
-            padding:
-                const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 8),
+            padding: const EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 4,
+              bottom: 8,
+            ),
             child: Align(
               alignment: Alignment.centerLeft,
               child: _controls(context, ref),
             ),
           ),
+          if (ref.watch(scanProvider).running)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: [
+                  LinearProgressIndicator(
+                    value: ref.watch(scanProvider).total == 0
+                        ? null
+                        : ref.watch(scanProvider).processed /
+                              ref.watch(scanProvider).total,
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Scanning ${ref.watch(scanProvider).processed} / ${ref.watch(scanProvider).total}',
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            ref.read(scanProvider.notifier).cancel(),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           Expanded(child: _body(context, ref)),
         ],
       ),

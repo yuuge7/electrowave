@@ -13,6 +13,8 @@ import 'package:window_manager/window_manager.dart';
 class SingleInstanceService {
   static const int _windowsPort = 47831;
   static ServerSocket? _server;
+  static void Function(List<String>)? onFiles;
+  static List<String> _arguments = [];
 
   static bool get _supported =>
       Platform.isLinux || Platform.isWindows || Platform.isMacOS;
@@ -35,7 +37,8 @@ class SingleInstanceService {
   /// Returns true when this process is the primary instance. Returns false
   /// when another instance is already running — it has been told to show
   /// itself and the caller should exit immediately.
-  static Future<bool> ensurePrimary() async {
+  static Future<bool> ensurePrimary([List<String> arguments = const []]) async {
+    _arguments = arguments;
     if (!_supported) return true;
 
     try {
@@ -63,13 +66,30 @@ class SingleInstanceService {
   static Future<void> _bind() async {
     _server = await ServerSocket.bind(_address(), _port);
     _server!.listen((client) {
-      client.listen((data) async {
-        if (utf8.decode(data).trim() == 'SHOW') {
-          await windowManager.show();
-          await windowManager.focus();
-        }
-        client.destroy();
-      }, onError: (_) => client.destroy());
+      final buffer = StringBuffer();
+      client
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) async {
+            buffer.write(line);
+            try {
+              final raw = jsonDecode(buffer.toString());
+              if (raw is List) {
+                onFiles?.call(
+                  raw
+                      .whereType<String>()
+                      .where((path) => !path.startsWith('-'))
+                      .toList(),
+                );
+              }
+              await windowManager.show();
+              await windowManager.focus();
+            } catch (_) {
+              /* Ignore malformed local commands. */
+            }
+            client.destroy();
+          }, onError: (_) => client.destroy());
     });
   }
 
@@ -81,7 +101,7 @@ class SingleInstanceService {
         _port,
         timeout: const Duration(seconds: 2),
       );
-      socket.add(utf8.encode('SHOW\n'));
+      socket.add(utf8.encode('${jsonEncode(_arguments)}\n'));
       await socket.flush();
       socket.destroy();
       return true;

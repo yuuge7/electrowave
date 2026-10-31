@@ -1,3 +1,4 @@
+import 'listening_tail.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart'; // Added for debugPrint
@@ -51,8 +52,8 @@ final scrobblingServiceProvider = Provider<void>((ref) {
   /// of audio per second of wall clock, so a fixed window would start dropping
   /// real listening as soon as the rate was turned up.
   Duration maxListenStep() => Duration(
-        milliseconds: (2000 * player.state.rate.clamp(1.0, 4.0)).round(),
-      );
+    milliseconds: (2000 * player.state.rate.clamp(1.0, 4.0)).round(),
+  );
 
   /// Writes are throttled: losing the tail of a session to a kill costs a few
   /// seconds of precision, and the row is topped up on every track change.
@@ -73,8 +74,10 @@ final scrobblingServiceProvider = Provider<void>((ref) {
     if (ms < 1000) return;
 
     savedListenedMs = ms;
-    final session = listenSession ??=
-        database.startListeningSession(track.id, startedAt: listenStartedAt);
+    final session = listenSession ??= database.startListeningSession(
+      track.id,
+      startedAt: listenStartedAt,
+    );
     await database.saveListenedMs(await session, ms);
   }
 
@@ -96,9 +99,33 @@ final scrobblingServiceProvider = Provider<void>((ref) {
   // Closes the outgoing track's session while it is still the current track,
   // so its time is booked against the right row.
   db.Track? trackBeingMeasured;
+  final recentSessions = <int, ({Future<int> id, int ms})>{};
+  final tailSubscription = ref.read(tailListeningProvider).stream.listen((
+    tail,
+  ) async {
+    if (trackBeingMeasured?.id == tail.trackId) {
+      listenedMs += tail.listenedMs;
+      await flushListening(trackBeingMeasured);
+    } else {
+      final recent = recentSessions[tail.trackId];
+      if (recent != null) {
+        await database.saveListenedMs(
+          await recent.id,
+          recent.ms + tail.listenedMs,
+        );
+      }
+    }
+    recentSessions.remove(tail.trackId);
+  });
   ref.listen(currentTrackProvider, (previous, next) {
     if (previous?.id == next?.id) return;
     unawaited(flushListening(previous));
+    if (previous != null && listenSession != null) {
+      recentSessions[previous.id] = (id: listenSession!, ms: listenedMs);
+      if (recentSessions.length > 4) {
+        recentSessions.remove(recentSessions.keys.first);
+      }
+    }
     listenSession = null;
     listenStartedAt = null;
     listenedMs = 0;
@@ -171,6 +198,7 @@ final scrobblingServiceProvider = Provider<void>((ref) {
 
   ref.onDispose(() {
     subscription.cancel();
+    tailSubscription.cancel();
     pauseSubscription.cancel();
     unawaited(flushListening(trackBeingMeasured));
   });

@@ -21,9 +21,11 @@ import 'audio_engine.dart' show buildFilterChain;
 /// [stop] or [dispose].
 class PreviewPlayer extends ChangeNotifier {
   PreviewPlayer(this._main, {this.settings}) {
-    _subscriptions.add(_main.stream.playing.listen((playing) {
-      if (playing && _playing) unawaited(_player?.pause());
-    }));
+    _subscriptions.add(
+      _main.stream.playing.listen((playing) {
+        if (playing && _playing) unawaited(_player?.pause());
+      }),
+    );
   }
 
   final Player _main;
@@ -55,23 +57,29 @@ class PreviewPlayer extends ChangeNotifier {
     final player = Player();
     unawaited(player.setPlaylistMode(PlaylistMode.none));
 
-    _subscriptions.add(player.stream.playing.listen((playing) {
-      if (playing == _playing) return;
-      _playing = playing;
-      _notify();
-    }));
-    _subscriptions.add(player.stream.error.listen((message) {
-      if (_track == null) return;
-      _error = message;
-      _notify();
-    }));
+    _subscriptions.add(
+      player.stream.playing.listen((playing) {
+        if (playing == _playing) return;
+        _playing = playing;
+        _notify();
+      }),
+    );
+    _subscriptions.add(
+      player.stream.error.listen((message) {
+        if (_track == null) return;
+        _error = message;
+        _notify();
+      }),
+    );
     // mpv also reports errors it recovers from; audio actually advancing
     // proves the song plays, so drop the message then.
-    _subscriptions.add(player.stream.position.listen((position) {
-      if (_error == null || position <= Duration.zero) return;
-      _error = null;
-      _notify();
-    }));
+    _subscriptions.add(
+      player.stream.position.listen((position) {
+        if (_error == null || position <= Duration.zero) return;
+        _error = null;
+        _notify();
+      }),
+    );
 
     unawaited(_applySettings(player));
     return player;

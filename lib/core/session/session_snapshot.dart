@@ -52,20 +52,20 @@ class SessionSnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'version': 1,
-        'currentTrackId': currentTrackId,
-        'positionMs': positionMs,
-        'volume': volume,
-        'shuffle': shuffle,
-        'repeatMode': repeatMode,
-        'contextTrackIds': contextTrackIds,
-        'contextIndex': contextIndex,
-        'manualQueueTrackIds': manualQueueTrackIds,
-        'playingFromManualQueue': playingFromManualQueue,
-        'navIndex': navIndex,
-        'selectedPlaylistId': selectedPlaylistId,
-        'queuePanelVisible': queuePanelVisible,
-      };
+    'version': 1,
+    'currentTrackId': currentTrackId,
+    'positionMs': positionMs,
+    'volume': volume,
+    'shuffle': shuffle,
+    'repeatMode': repeatMode,
+    'contextTrackIds': contextTrackIds,
+    'contextIndex': contextIndex,
+    'manualQueueTrackIds': manualQueueTrackIds,
+    'playingFromManualQueue': playingFromManualQueue,
+    'navIndex': navIndex,
+    'selectedPlaylistId': selectedPlaylistId,
+    'queuePanelVisible': queuePanelVisible,
+  };
 
   /// Tolerant parsing: a half-written or older session file must never stop
   /// the app from starting, so every field falls back to its default.
@@ -84,7 +84,9 @@ class SessionSnapshot {
           ? (json['volume'] as num).toDouble().clamp(0.0, 100.0)
           : 100.0,
       shuffle: json['shuffle'] == true,
-      repeatMode: json['repeatMode'] is String ? json['repeatMode'] as String : 'off',
+      repeatMode: json['repeatMode'] is String
+          ? json['repeatMode'] as String
+          : 'off',
       contextTrackIds: intList(json['contextTrackIds']),
       contextIndex: optionalInt(json['contextIndex']) ?? -1,
       manualQueueTrackIds: intList(json['manualQueueTrackIds']),

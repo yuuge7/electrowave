@@ -1,5 +1,9 @@
+import '../services/listening_tail.dart';
 import 'dart:async';
 import 'dart:math';
+import 'dart:io';
+import '../../../core/local_log.dart';
+import '../../settings/providers/settings_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import '../../../core/database/app_database.dart' as db;
@@ -15,27 +19,35 @@ enum PlaybackRepeatMode { off, all, one }
 class RepeatModeNotifier extends Notifier<PlaybackRepeatMode> {
   @override
   PlaybackRepeatMode build() => PlaybackRepeatMode.off;
-  
+
   void cycle() {
-    state = state == PlaybackRepeatMode.off ? PlaybackRepeatMode.all
-          : state == PlaybackRepeatMode.all ? PlaybackRepeatMode.one
-          : PlaybackRepeatMode.off;
+    state = state == PlaybackRepeatMode.off
+        ? PlaybackRepeatMode.all
+        : state == PlaybackRepeatMode.all
+        ? PlaybackRepeatMode.one
+        : PlaybackRepeatMode.off;
   }
 
   void set(PlaybackRepeatMode mode) => state = mode;
 }
-final repeatModeProvider = NotifierProvider<RepeatModeNotifier, PlaybackRepeatMode>(RepeatModeNotifier.new);
+
+final repeatModeProvider =
+    NotifierProvider<RepeatModeNotifier, PlaybackRepeatMode>(
+      RepeatModeNotifier.new,
+    );
 
 class ShuffleNotifier extends Notifier<bool> {
   @override
   bool build() => false;
-  
+
   void toggle() => state = !state;
 
   void set(bool value) => state = value;
 }
-final shuffleProvider = NotifierProvider<ShuffleNotifier, bool>(ShuffleNotifier.new);
 
+final shuffleProvider = NotifierProvider<ShuffleNotifier, bool>(
+  ShuffleNotifier.new,
+);
 
 // --- 2. CURRENT TRACK NOTIFIER ---
 
@@ -47,166 +59,439 @@ class CurrentTrackNotifier extends Notifier<db.Track?> {
     state = track;
   }
 }
-final currentTrackProvider = NotifierProvider<CurrentTrackNotifier, db.Track?>(CurrentTrackNotifier.new);
 
+final currentTrackProvider = NotifierProvider<CurrentTrackNotifier, db.Track?>(
+  CurrentTrackNotifier.new,
+);
 
 // --- 3. PLAYBACK CONTROLLER ---
 // This safely gives our functions access to all providers without WidgetRef/Ref type errors
 
-class PlaybackController {
-  final Ref ref;
-  PlaybackController(this.ref);
+class NextTrack {
+  const NextTrack(this.track, this.queue);
+  final db.Track track;
+  final QueueState queue;
+}
 
-  void _play(db.Track track) {
-    ref.read(currentTrackProvider.notifier).setTrack(track);
-    ref.read(playerProvider).open(Media(track.filePath));
-    // mpv resets speed on every new file, so the chosen rate has to be pushed
-    // back after each open.
-    unawaited(ref.read(audioEngineProvider).reapplyRate());
+/// One decision shared by gapless preloading, manual next, and unit tests.
+NextTrack? chooseNext(
+  QueueState queue, {
+  required bool shuffle,
+  required PlaybackRepeatMode repeat,
+  db.Track? current,
+  bool completed = true,
+  Random? random,
+}) {
+  if (repeat == PlaybackRepeatMode.one &&
+      completed &&
+      current != null &&
+      !current.isMissing &&
+      !current.isDeleted) {
+    return NextTrack(current, queue);
+  }
+  final manual = [...queue.manualQueue];
+  while (manual.isNotEmpty) {
+    final track = manual.removeAt(0);
+    if (!track.isMissing && !track.isDeleted) {
+      return NextTrack(
+        track,
+        queue.copyWith(manualQueue: manual, playingFromManualQueue: true),
+      );
+    }
+  }
+  final available = <int>[
+    for (var i = 0; i < queue.context.length; i++)
+      if (!queue.context[i].isMissing && !queue.context[i].isDeleted) i,
+  ];
+  if (available.isEmpty) return null;
+  int? index;
+  if (shuffle) {
+    final alternatives = available
+        .where((i) => i != queue.contextIndex)
+        .toList();
+    final choices = alternatives.isEmpty ? available : alternatives;
+    index = choices[(random ?? Random()).nextInt(choices.length)];
+  } else {
+    for (final i in available) {
+      if (i > queue.contextIndex) {
+        index = i;
+        break;
+      }
+    }
+    if (index == null && repeat == PlaybackRepeatMode.all) {
+      index = available.first;
+    }
+  }
+  if (index == null) return null;
+  return NextTrack(
+    queue.context[index],
+    queue.copyWith(
+      contextIndex: index,
+      manualQueue: manual,
+      playingFromManualQueue: false,
+    ),
+  );
+}
+
+class PlaybackController {
+  PlaybackController(this.ref) {
+    final player = ref.read(playerProvider);
+    _subscriptions.add(player.stream.playlist.listen(_onPlaylist));
+    _subscriptions.add(player.stream.position.listen((_) => _maybeCrossfade()));
+    _subscriptions.add(
+      player.stream.completed.listen((done) {
+        if (!done || _opening || _fading) return;
+        final timer = ref.read(sleepTimerProvider);
+        if (timer?.endOfTrack ?? false) {
+          ref.read(sleepTimerProvider.notifier).fireNow();
+          return;
+        }
+        // Native playlist transitions handle all preloaded tracks. Completion
+        // is only emitted at its end (e.g. no next playable file).
+        if (_prepared == null) playNextTrack(fromCompletion: true);
+      }),
+    );
+    _subscriptions.add(
+      player.stream.playing.listen((playing) {
+        final tail = _tail;
+        if (tail != null) {
+          unawaited(playing ? tail.play() : tail.pause());
+        }
+      }),
+    );
+    ref.listen(queueProvider, (_, _) => _scheduleSync());
+    ref.listen(shuffleProvider, (_, _) => _scheduleSync());
+    ref.listen(repeatModeProvider, (_, _) => _scheduleSync());
+    ref.listen(sleepTimerProvider, (_, _) => _scheduleSync());
+    ref.onDispose(() {
+      _disposed = true;
+      for (final subscription in _subscriptions) {
+        unawaited(subscription.cancel());
+      }
+      unawaited(_stopTail());
+    });
+  }
+  final Ref ref;
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+  NextTrack? _prepared;
+  String? _preparedUri;
+  int _preparedIndex = -1;
+  bool _opening = false,
+      _syncing = false,
+      _syncAgain = false,
+      _disposed = false,
+      _fading = false;
+  int _generation = 0;
+  Player? _tail;
+  double? _fadeVolume;
+
+  Future<void> _stopTail() async {
+    final tail = _tail;
+    _tail = null;
+    if (tail != null) await tail.dispose();
+    if (_fadeVolume case final volume?) {
+      _fadeVolume = null;
+      if (!_disposed) await ref.read(playerProvider).setVolume(volume);
+    }
+    _fading = false;
   }
 
-  /// Entry point for the UI: the user clicked the track at [index] inside
-  /// [tracks] (a playlist, the library, search results...). That list
-  /// becomes the playback context that next/previous walk through.
+  Future<void> _open(
+    db.Track track, {
+    bool play = true,
+    Duration start = Duration.zero,
+  }) async {
+    final generation = ++_generation;
+    await _stopTail();
+    _opening = true;
+    _prepared = null;
+    try {
+      if (!await File(track.filePath).exists()) {
+        LocalLog.write('File missing: ${track.filePath}');
+        // Marking the queue snapshot avoids retry loops before a rescan.
+        final q = ref.read(queueProvider);
+        ref
+            .read(queueProvider.notifier)
+            .replace(
+              q.copyWith(
+                context: q.context
+                    .map(
+                      (t) => t.id == track.id ? t.copyWith(isMissing: true) : t,
+                    )
+                    .toList(),
+                manualQueue: q.manualQueue
+                    .where((t) => t.id != track.id)
+                    .toList(),
+              ),
+            );
+        _opening = false;
+        playNextTrack();
+        return;
+      }
+      ref.read(currentTrackProvider.notifier).setTrack(track);
+      final player = ref.read(playerProvider);
+      await player.open(
+        Playlist([Media(track.filePath, start: start)]),
+        play: play,
+      );
+      if (generation != _generation) return;
+      await ref.read(audioEngineProvider).reapplyRate();
+      await ref.read(audioEngineProvider).setTrackGain(track.replayGainDb);
+    } catch (e, st) {
+      LocalLog.write(e, st);
+    } finally {
+      if (generation == _generation) {
+        _opening = false;
+        _scheduleSync();
+      }
+    }
+  }
+
+  Future<void> seek(Duration position) async {
+    await _stopTail();
+    await ref.read(playerProvider).seek(position);
+  }
+
+  Future<void> setVolume(double volume) async {
+    await _stopTail();
+    await ref.read(playerProvider).setVolume(volume.clamp(0, 100));
+  }
+
+  Future<void> restoreTrack(db.Track track, Duration start) =>
+      _open(track, play: false, start: start);
+
   void playFromContext(List<db.Track> tracks, int index) {
     if (index < 0 || index >= tracks.length) return;
     ref.read(queueProvider.notifier).setContext(tracks, index);
-    _play(tracks[index]);
+    unawaited(_open(tracks[index]));
   }
 
-  /// Plays [track] immediately without touching the context, and resumes
-  /// the context afterwards (used when tapping a manual-queue item).
   void playQueuedTrackNow(db.Track track) {
-    final queue = ref.read(queueProvider);
-    final queueIndex = queue.manualQueue.indexWhere((t) => t.id == track.id);
-    if (queueIndex != -1) {
-      ref.read(queueProvider.notifier).removeFromQueue(queueIndex);
-    }
-    ref.read(queueProvider.notifier).markPlayingFromManualQueue();
-    _play(track);
+    final q = ref.read(queueProvider);
+    ref
+        .read(queueProvider.notifier)
+        .replace(
+          q.copyWith(
+            manualQueue: q.manualQueue.where((t) => t.id != track.id).toList(),
+            playingFromManualQueue: true,
+          ),
+        );
+    unawaited(_open(track));
   }
+
+  NextTrack? _next({bool completed = true}) => chooseNext(
+    ref.read(queueProvider),
+    shuffle: ref.read(shuffleProvider),
+    repeat: ref.read(repeatModeProvider),
+    current: ref.read(currentTrackProvider),
+    completed: completed,
+  );
 
   void playNextTrack({bool fromCompletion = false}) {
-    final repeatMode = ref.read(repeatModeProvider);
-    final currentTrack = ref.read(currentTrackProvider);
-    final queueNotifier = ref.read(queueProvider.notifier);
-
-    // Repeat-one only loops on natural completion; a manual "next" still
-    // advances (Spotify behavior).
-    if (repeatMode == PlaybackRepeatMode.one && fromCompletion) {
-      if (currentTrack != null) {
-        ref.read(playerProvider).open(Media(currentTrack.filePath));
-        // A repeat lap is a new file open as far as mpv is concerned, so the
-        // speed and the filter chain have to be pushed back here too.
-        unawaited(ref.read(audioEngineProvider).reapplyRate());
-      }
-      return;
-    }
-
-    // The manual queue always plays before the context resumes.
-    final queued = queueNotifier.popManualQueue();
-    if (queued != null) {
-      _play(queued);
-      return;
-    }
-
-    final queue = ref.read(queueProvider);
-    final context = queue.context;
-    if (context.isEmpty) return;
-
-    if (ref.read(shuffleProvider)) {
-      final random = Random();
-      int nextIndex = random.nextInt(context.length);
-      // Avoid immediately repeating the same track when there's a choice.
-      if (context.length > 1 && nextIndex == queue.contextIndex) {
-        nextIndex = (nextIndex + 1) % context.length;
-      }
-      queueNotifier.moveToContextIndex(nextIndex);
-      _play(context[nextIndex]);
-      return;
-    }
-
-    // While a manual-queue track plays, contextIndex still points at the
-    // track it interrupted, so +1 resumes the context correctly.
-    int nextIndex = queue.contextIndex + 1;
-    if (nextIndex >= context.length) {
-      if (repeatMode == PlaybackRepeatMode.all) {
-        nextIndex = 0;
-      } else {
-        return;
-      }
-    }
-    queueNotifier.moveToContextIndex(nextIndex);
-    _play(context[nextIndex]);
+    final next = _next(completed: fromCompletion);
+    if (next == null) return;
+    ref.read(queueProvider.notifier).replace(next.queue);
+    unawaited(_open(next.track));
   }
 
   void playPreviousTrack() {
     final player = ref.read(playerProvider);
-
     if (player.state.position > const Duration(seconds: 3)) {
-      player.seek(Duration.zero);
+      unawaited(player.seek(Duration.zero));
       return;
     }
-
-    final queue = ref.read(queueProvider);
-    final context = queue.context;
-    if (context.isEmpty) {
-      player.seek(Duration.zero);
+    final q = ref.read(queueProvider);
+    var index = q.playingFromManualQueue ? q.contextIndex : q.contextIndex - 1;
+    while (index >= 0 && q.context[index].isMissing) {
+      index--;
+    }
+    if (index < 0) {
+      unawaited(player.seek(Duration.zero));
       return;
     }
+    ref.read(queueProvider.notifier).moveToContextIndex(index);
+    unawaited(_open(q.context[index]));
+  }
 
-    // From a manual-queue track, "previous" returns to the context track
-    // it interrupted.
-    if (queue.playingFromManualQueue) {
-      if (queue.contextIndex >= 0 && queue.contextIndex < context.length) {
-        ref
-            .read(queueProvider.notifier)
-            .moveToContextIndex(queue.contextIndex);
-        _play(context[queue.contextIndex]);
-      } else {
-        player.seek(Duration.zero);
+  void _scheduleSync() {
+    if (_disposed) return;
+    _syncAgain = true;
+    scheduleMicrotask(_syncUpcoming);
+  }
+
+  Future<void> _syncUpcoming() async {
+    if (_syncing || _opening || _disposed || _fading) return;
+    _syncing = true;
+    try {
+      do {
+        _syncAgain = false;
+        final player = ref.read(playerProvider);
+        if (ref.read(currentTrackProvider) == null ||
+            player.state.playlist.medias.isEmpty) {
+          break;
+        }
+        var next = (ref.read(sleepTimerProvider)?.endOfTrack ?? false)
+            ? null
+            : _next();
+        // Stale flags can occur between a deletion and a watcher event.
+        final attempted = <int>{};
+        while (next != null && !await File(next.track.filePath).exists()) {
+          if (!attempted.add(next.track.id)) {
+            next = null;
+            break;
+          }
+          final q = next.queue;
+          ref
+              .read(queueProvider.notifier)
+              .replace(
+                q.copyWith(
+                  context: q.context
+                      .map(
+                        (t) => t.id == next!.track.id
+                            ? t.copyWith(isMissing: true)
+                            : t,
+                      )
+                      .toList(),
+                ),
+              );
+          next = _next();
+        }
+        final index = player.state.playlist.index;
+        _prepared = null;
+        for (var i = player.state.playlist.medias.length - 1; i > index; i--) {
+          await player.remove(i);
+        }
+        if (next != null) {
+          _prepared = next;
+          final media = Media(next.track.filePath);
+          _preparedUri = media.uri;
+          _preparedIndex = index + 1;
+          await player.add(media);
+        }
+      } while (_syncAgain && !_opening && !_disposed);
+    } catch (e, st) {
+      LocalLog.write(e, st);
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  void _onPlaylist(Playlist playlist) {
+    if (_opening ||
+        _disposed ||
+        playlist.index < 0 ||
+        playlist.index >= playlist.medias.length) {
+      return;
+    }
+    final next = _prepared;
+    if (next == null ||
+        playlist.index != _preparedIndex ||
+        playlist.medias[playlist.index].uri != _preparedUri) {
+      return;
+    }
+    _prepared = null;
+    ref.read(currentTrackProvider.notifier).setTrack(next.track);
+    ref.read(queueProvider.notifier).replace(next.queue);
+    unawaited(ref.read(audioEngineProvider).reapplyRate());
+    unawaited(
+      ref.read(audioEngineProvider).setTrackGain(next.track.replayGainDb),
+    );
+    _scheduleSync();
+  }
+
+  Future<void> _maybeCrossfade() async {
+    if (_fading || _opening || _prepared == null || _disposed) return;
+    final settings = ref.read(settingsControllerProvider);
+    final player = ref.read(playerProvider);
+    final remaining = player.state.duration - player.state.position;
+    if (settings.crossfadeSeconds <= 0 ||
+        settings.exclusiveMode ||
+        !player.state.playing ||
+        remaining <= Duration.zero ||
+        remaining.inMilliseconds > settings.crossfadeSeconds * 1000 ||
+        player.state.duration.inSeconds < 5 ||
+        (ref.read(sleepTimerProvider)?.endOfTrack ?? false)) {
+      return;
+    }
+    _fading = true;
+    final generation = _generation;
+    final next = _prepared!;
+    final outgoing = ref.read(currentTrackProvider);
+    if (outgoing == null) {
+      _fading = false;
+      return;
+    }
+    final volume = player.state.volume;
+    _fadeVolume = volume;
+    final tail = Player();
+    _tail = tail;
+    var tailMs = 0;
+    Duration? lastTail;
+    final tailSubscription = tail.stream.position.listen((position) {
+      final previous = lastTail;
+      lastTail = position;
+      if (_disposed ||
+          previous == null ||
+          !tail.state.playing ||
+          ref.read(currentTrackProvider)?.id == outgoing.id && !_fading) {
+        return;
       }
-      return;
+      final delta = (position - previous).inMilliseconds;
+      if (delta > 0 && delta <= 2000 * settings.playbackRate) tailMs += delta;
+    });
+    final engine = AudioEngine(tail);
+    try {
+      await engine.applyAudioSettings(settings);
+      await engine.setRate(settings.playbackRate);
+      await tail.setVolume(0);
+      await tail.open(Media(outgoing.filePath, start: player.state.position));
+      if (generation != _generation || _disposed) return;
+      await player.setVolume(0);
+      await tail.setVolume(volume);
+      _prepared = null;
+      _opening = true;
+      await player.open(Playlist([Media(next.track.filePath)]));
+      ref.read(currentTrackProvider.notifier).setTrack(next.track);
+      ref.read(queueProvider.notifier).replace(next.queue);
+      _opening = false;
+      await ref.read(audioEngineProvider).reapplyRate();
+      final duration = remaining.inMilliseconds.clamp(100, 12000);
+      while (generation == _generation && !_disposed && _tail == tail) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        if (!player.state.playing) continue;
+        final progress = (player.state.position.inMilliseconds / duration)
+            .clamp(0.0, 1.0);
+        await tail.setVolume(volume * (1 - progress));
+        await player.setVolume(volume * progress);
+        if (progress >= 1) break;
+      }
+    } catch (e, st) {
+      LocalLog.write(e, st);
+    } finally {
+      await tailSubscription.cancel();
+      engine.dispose();
+      if (tailMs > 0 && !_disposed) {
+        ref.read(tailListeningProvider).add(TailListening(outgoing.id, tailMs));
+      }
+      _opening = false;
+      if (_tail == tail) await _stopTail();
+      _scheduleSync();
     }
-
-    final prevIndex = queue.contextIndex - 1;
-    if (prevIndex < 0) {
-      player.seek(Duration.zero);
-      return;
-    }
-    ref.read(queueProvider.notifier).moveToContextIndex(prevIndex);
-    _play(context[prevIndex]);
   }
 }
 
 final playbackControllerProvider = Provider((ref) => PlaybackController(ref));
 
-
 // --- 4. PLAYER PROVIDER ---
 
 final playerProvider = Provider<Player>((ref) {
   final player = Player();
-  
+
   player.setPlaylistMode(PlaylistMode.none);
 
-  player.stream.completed.listen((completed) {
-    if (completed) {
-      Future.microtask(() {
-        // Sleep timer in "end of current track" mode: stop here instead of
-        // advancing.
-        final sleepTimer = ref.read(sleepTimerProvider);
-        if (sleepTimer != null && sleepTimer.endOfTrack) {
-          ref.read(sleepTimerProvider.notifier).fireNow();
-          return;
-        }
-        ref.read(playbackControllerProvider).playNextTrack(fromCompletion: true);
-      });
-    }
-  });
-  
   ref.onDispose(() {
     player.dispose();
   });
-  
+
   return player;
 });

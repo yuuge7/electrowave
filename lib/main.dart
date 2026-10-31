@@ -1,12 +1,14 @@
 import 'dart:io';
+import 'dart:async';
+import 'core/app_paths.dart';
+import 'core/local_log.dart';
+import 'features/settings/services/backup_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
-import 'core/session/session_store.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'shared/theme/app_theme.dart';
 import 'shared/services/linux_desktop_integration.dart';
@@ -16,51 +18,38 @@ import 'shared/widgets/startup_error_app.dart';
 
 Future<void> applyPendingDatabaseImport() async {
   try {
-    final dir = await getApplicationDocumentsDirectory(); // (or SupportDirectory, whichever you are using)
-    
-    // 1. Target the specific Electrowave subfolder
-    final appDir = Directory(p.join(dir.path, 'Electrowave'));
-    
-    // 2. Point to the files INSIDE that subfolder
-    final dbFile = File(p.join(appDir.path, 'local_player_db.sqlite'));
-    final pendingFile = File(p.join(appDir.path, 'pending_import.sqlite'));
-
-    debugPrint("=== BOOT LOOKING FOR: ${pendingFile.path} ===");
-
-    if (await pendingFile.exists()) {
-      debugPrint("Found pending import! Overwriting database...");
-      
-      final walFile = File('${dbFile.path}-wal');
-      final shmFile = File('${dbFile.path}-shm');
-      
-      if (await walFile.exists()) await walFile.delete();
-      if (await shmFile.exists()) await shmFile.delete();
-
-      await pendingFile.copy(dbFile.path);
-      await pendingFile.delete();
-
-      // The saved session points at track IDs from the *old* database, so it
-      // would restore the wrong songs against the imported library.
-      await SessionStore.clear();
-
-      await File(p.join(appDir.path, 'import_success.flag')).create();
-      
-      debugPrint("Pending import applied successfully on startup!");
-    } else {
-      debugPrint("No pending import found. Normal boot sequence.");
-    }
-  } catch (e) {
-    debugPrint("Error applying pending import: $e");
+    await BackupService().applyPendingImport();
+  } catch (e, st) {
+    LocalLog.write(e, st);
   }
 }
 
 // Global database instance provided via Riverpod
 final databaseProvider = Provider<AppDatabase>((ref) {
-  return AppDatabase();
+  final db = AppDatabase();
+  ref.onDispose(() => unawaited(db.close()));
+  return db;
 });
 
-void main() async {
+void main(List<String> arguments) {
+  runZonedGuarded(
+    () async {
+      await _start(arguments);
+    },
+    (error, stack) {
+      LocalLog.write(error, stack);
+    },
+  );
+}
+
+List<String> launchFiles = [];
+Future<void> _start(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  launchFiles = arguments.where((path) => !path.startsWith('-')).toList();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    LocalLog.write(details.exception, details.stack);
+  };
 
   // Needed for hide-to-tray (show/hide/focus the native window)
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
@@ -68,10 +57,12 @@ void main() async {
 
     // Single instance: if Electrowave is already running, tell it to show
     // its window and exit this process.
-    if (!await SingleInstanceService.ensurePrimary()) {
+    if (!await SingleInstanceService.ensurePrimary(arguments)) {
       exit(0);
     }
   }
+
+  await appDataDirectory();
 
   // Install .desktop file + icon so the taskbar/launcher shows our icon
   await LinuxDesktopIntegration.ensureInstalled();
@@ -100,15 +91,11 @@ void main() async {
     return;
   }
 
-  runApp(
-    const ProviderScope(
-      child: LocalPlayerApp(),
-    ),
-  );
+  runApp(const ProviderScope(child: ElectrowaveApp()));
 }
 
-class LocalPlayerApp extends ConsumerWidget {
-  const LocalPlayerApp({super.key});
+class ElectrowaveApp extends ConsumerWidget {
+  const ElectrowaveApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -118,6 +105,14 @@ class LocalPlayerApp extends ConsumerWidget {
 
     return MaterialApp(
       title: 'Electrowave',
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(
+            ref.watch(settingsControllerProvider).textScale,
+          ),
+        ),
+        child: child!,
+      ),
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
@@ -130,8 +125,7 @@ class LocalPlayerApp extends ConsumerWidget {
 
 Future<bool> checkAndConsumeImportFlag() async {
   try {
-    final dir = await getApplicationDocumentsDirectory(); 
-    final appDir = Directory(p.join(dir.path, 'Electrowave'));
+    final appDir = await appDataDirectory();
     final flagFile = File(p.join(appDir.path, 'import_success.flag'));
 
     if (await flagFile.exists()) {

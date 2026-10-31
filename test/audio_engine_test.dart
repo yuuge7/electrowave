@@ -34,7 +34,10 @@ void main() {
 
     test('EQ bands go into a single bracketed lavfi graph', () {
       final chain = buildFilterChain(
-        settings: const AppSettings(eqEnabled: true, eqGainsDb: [6, 0, 0, 0, -3]),
+        settings: const AppSettings(
+          eqEnabled: true,
+          eqGainsDb: [6, 0, 0, 0, 0, 0, 0, 0, 0, -3],
+        ),
         stretchFilter: null,
       );
 
@@ -46,16 +49,19 @@ void main() {
 
       // Inaudible bands are skipped, the rest keep their frequencies.
       expect('equalizer='.allMatches(chain).length, 2);
-      expect(chain, contains('f=60'));
+      expect(chain, contains('f=31'));
       expect(chain, contains('g=6.0'));
-      expect(chain, contains('f=14000'));
+      expect(chain, contains('f=16000'));
       expect(chain, contains('g=-3.0'));
       expect(chain, isNot(contains('f=230')));
     });
 
     test('the stretcher is last so it absorbs the speed change', () {
       final chain = buildFilterChain(
-        settings: const AppSettings(eqEnabled: true, eqGainsDb: [6, 0, 0, 0, 0]),
+        settings: const AppSettings(
+          eqEnabled: true,
+          eqGainsDb: [6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ),
         stretchFilter: _stretch,
       );
 
@@ -70,7 +76,10 @@ void main() {
 
     test('speed alone yields just the stretcher', () {
       expect(
-        buildFilterChain(settings: const AppSettings(), stretchFilter: _stretch),
+        buildFilterChain(
+          settings: const AppSettings(),
+          stretchFilter: _stretch,
+        ),
         _stretch,
       );
     });

@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
+import '../app_paths.dart';
+import '../smart_rules.dart';
 import 'package:path/path.dart' as p;
 
 part 'app_database.g.dart';
@@ -14,6 +15,12 @@ class Tracks extends Table {
   TextColumn get title => text()();
   TextColumn get artist => text()();
   TextColumn get album => text()();
+  TextColumn get albumArtist => text().nullable()();
+  IntColumn get fileSize => integer().nullable()();
+  IntColumn get modifiedMs => integer().nullable()();
+  BoolColumn get isMissing => boolean().withDefault(const Constant(false))();
+  IntColumn get rating => integer().withDefault(const Constant(0))();
+  RealColumn get replayGainDb => real().nullable()();
   IntColumn get durationMs => integer()();
   TextColumn get coverArtPath => text().nullable()();
   TextColumn get genre => text().nullable()();
@@ -37,6 +44,8 @@ class Tracks extends Table {
 class Playlists extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text()();
+  TextColumn get folder => text().nullable()();
+  TextColumn get rulesJson => text().nullable()();
 }
 
 class PlaylistTracks extends Table {
@@ -163,58 +172,87 @@ class SongStat {
   final DateTime? lastPlayed;
 }
 
-@DriftDatabase(tables: [
-  Tracks,
-  Playlists,
-  PlaylistTracks,
-  PlaybackHistory,
-  ListeningSessions,
-])
+@DriftDatabase(
+  tables: [
+    Tracks,
+    Playlists,
+    PlaylistTracks,
+    PlaybackHistory,
+    ListeningSessions,
+  ],
+)
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : _production = true, super(_openConnection());
 
-  AppDatabase.forTesting(super.e);
+  AppDatabase.forTesting(super.e) : _production = false;
+  final bool _production;
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
-        await m.createAll();
+        await transaction(() async {
+          await m.createAll();
+          await _createIndexes();
+          await customStatement('PRAGMA user_version = $schemaVersion');
+        });
+      },
+      beforeOpen: (_) async {
+        if (!_production) return;
+        final root = await appDataDirectory();
+        final paths = await customSelect(
+          "SELECT DISTINCT cover_art_path FROM tracks WHERE cover_art_path LIKE '%local_player_covers%'",
+        ).get();
+        await transaction(() async {
+          for (final row in paths) {
+            final old = row.read<String>('cover_art_path');
+            final cover = File(
+              p.join(root.path, 'covers', old.split(RegExp(r'[/\\]')).last),
+            );
+            if (await cover.exists()) {
+              await (update(tracks)..where((t) => t.coverArtPath.equals(old)))
+                  .write(TracksCompanion(coverArtPath: Value(cover.path)));
+            }
+          }
+        });
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        if (from < 2) {
-          await m.addColumn(tracks, tracks.coverArtPath);
-        }
-        if (from < 3) {
-          await m.addColumn(tracks, tracks.genre);
-        }
-        if (from < 4) {
-          await m.createTable(playlists);
-          await m.createTable(playlistTracks);
-        }
-        if (from < 5) {
-          await m.createTable(playbackHistory);
-        }
-        if(from < 6) {
-          await m.addColumn(tracks, tracks.isDeleted);
-        }
-        if (from < 7) {
-          await m.addColumn(tracks, tracks.trackNumber);
-          await m.addColumn(tracks, tracks.discNumber);
-          await m.addColumn(tracks, tracks.year);
-          await m.addColumn(tracks, tracks.dateAdded);
-          await m.addColumn(tracks, tracks.totalPlayCount);
-          await m.addColumn(tracks, tracks.lastPlayed);
-          await m.addColumn(tracks, tracks.isFavorite);
-          await m.addColumn(playlistTracks, playlistTracks.position);
-          await m.createTable(listeningSessions);
+        await transaction(() async {
+          if (from < 2) {
+            await m.addColumn(tracks, tracks.coverArtPath);
+          }
+          if (from < 3) {
+            await m.addColumn(tracks, tracks.genre);
+          }
+          if (from < 4) {
+            await m.createTable(playlists);
+            await m.createTable(playlistTracks);
+          }
+          if (from < 5) {
+            await m.createTable(playbackHistory);
+          }
+          if (from < 6) {
+            await m.addColumn(tracks, tracks.isDeleted);
+          }
+          if (from < 7) {
+            await m.addColumn(tracks, tracks.trackNumber);
+            await m.addColumn(tracks, tracks.discNumber);
+            await m.addColumn(tracks, tracks.year);
+            await m.addColumn(tracks, tracks.dateAdded);
+            await m.addColumn(tracks, tracks.totalPlayCount);
+            await m.addColumn(tracks, tracks.lastPlayed);
+            await m.addColumn(tracks, tracks.isFavorite);
+            if (from >= 4) {
+              await m.addColumn(playlistTracks, playlistTracks.position);
+            }
+            await m.createTable(listeningSessions);
 
-          // Play counts existed only as history rows until now; rebuild them
-          // so "Most played" and "Recently played" work from day one.
-          await customStatement('''
+            // Play counts existed only as history rows until now; rebuild them
+            // so "Most played" and "Recently played" work from day one.
+            await customStatement('''
             UPDATE tracks SET
               total_play_count =
                 (SELECT COUNT(*) FROM playback_history h WHERE h.track_id = tracks.id),
@@ -222,18 +260,100 @@ class AppDatabase extends _$AppDatabase {
                 (SELECT MAX(h.played_at) FROM playback_history h WHERE h.track_id = tracks.id)
           ''');
 
-          // Every existing playlist row landed on position 0; give them the
-          // order they were inserted in.
-          await customStatement('''
+            // Every existing playlist row landed on position 0; give them the
+            // order they were inserted in.
+            await customStatement('''
             UPDATE playlist_tracks SET position = (
               SELECT COUNT(*) FROM playlist_tracks older
               WHERE older.playlist_id = playlist_tracks.playlist_id
                 AND older.rowid < playlist_tracks.rowid
             )
           ''');
-        }
+          }
+          if (from < 8) {
+            for (final column in [
+              tracks.albumArtist,
+              tracks.fileSize,
+              tracks.modifiedMs,
+              tracks.isMissing,
+              tracks.rating,
+              tracks.replayGainDb,
+            ]) {
+              await m.addColumn(tracks, column);
+            }
+            if (from >= 4) {
+              await m.addColumn(playlists, playlists.folder);
+              await m.addColumn(playlists, playlists.rulesJson);
+            }
+            await _mergeDuplicatePaths();
+            await _createIndexes();
+          }
+          await customStatement('PRAGMA user_version = $to');
+        });
       },
     );
+  }
+
+  Future<void> _createIndexes() async {
+    for (final sql in [
+      'CREATE UNIQUE INDEX IF NOT EXISTS tracks_path_unique ON tracks(file_path)',
+      'CREATE INDEX IF NOT EXISTS history_track_date ON playback_history(track_id, played_at)',
+      'CREATE INDEX IF NOT EXISTS history_date ON playback_history(played_at)',
+      'CREATE INDEX IF NOT EXISTS sessions_track_date ON listening_sessions(track_id, started_at)',
+      'CREATE INDEX IF NOT EXISTS tracks_album_artist ON tracks(album, album_artist)',
+      'CREATE INDEX IF NOT EXISTS tracks_genre_year ON tracks(genre, year)',
+    ]) {
+      await customStatement(sql);
+    }
+  }
+
+  /// Merge references before enforcing uniqueness; never discard listening data.
+  Future<void> _mergeDuplicatePaths() async {
+    final duplicates = await customSelect(
+      'SELECT file_path FROM tracks GROUP BY file_path HAVING COUNT(*) > 1',
+    ).get();
+    for (final duplicate in duplicates) {
+      final rows =
+          await (select(tracks)
+                ..where(
+                  (t) => t.filePath.equals(duplicate.read<String>('file_path')),
+                )
+                ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+              .get();
+      final keep = rows.first;
+      for (final extra in rows.skip(1)) {
+        await customStatement(
+          'UPDATE playback_history SET track_id = ? WHERE track_id = ?',
+          [keep.id, extra.id],
+        );
+        await customStatement(
+          'UPDATE listening_sessions SET track_id = ? WHERE track_id = ?',
+          [keep.id, extra.id],
+        );
+        await customStatement(
+          'UPDATE OR IGNORE playlist_tracks SET track_id = ? WHERE track_id = ?',
+          [keep.id, extra.id],
+        );
+        await customStatement(
+          'DELETE FROM playlist_tracks WHERE track_id = ?',
+          [extra.id],
+        );
+        await customStatement(
+          'UPDATE tracks SET is_favorite = MAX(is_favorite, ?), rating = MAX(rating, ?), is_deleted = MIN(is_deleted, ?) WHERE id = ?',
+          [
+            extra.isFavorite ? 1 : 0,
+            extra.rating,
+            extra.isDeleted ? 1 : 0,
+            keep.id,
+          ],
+        );
+        await customStatement('DELETE FROM tracks WHERE id = ?', [extra.id]);
+      }
+      await customStatement(
+        'UPDATE tracks SET total_play_count = (SELECT COUNT(*) FROM playback_history WHERE track_id = ?), last_played = (SELECT MAX(played_at) FROM playback_history WHERE track_id = ?) WHERE id = ?',
+        [keep.id, keep.id, keep.id],
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -249,14 +369,17 @@ class AppDatabase extends _$AppDatabase {
 
     if (search.trim().isNotEmpty) {
       final needle = '%${search.trim()}%';
-      query.where((t) =>
-          t.title.like(needle) | t.artist.like(needle) | t.album.like(needle));
+      query.where(
+        (t) =>
+            t.title.like(needle) | t.artist.like(needle) | t.album.like(needle),
+      );
     }
 
     switch (sort) {
       case LibrarySort.title:
-        query.orderBy(
-            [(t) => OrderingTerm.asc(t.title.collate(Collate.noCase))]);
+        query.orderBy([
+          (t) => OrderingTerm.asc(t.title.collate(Collate.noCase)),
+        ]);
       case LibrarySort.artist:
         query.orderBy([
           (t) => OrderingTerm.asc(t.artist.collate(Collate.noCase)),
@@ -316,8 +439,9 @@ class AppDatabase extends _$AppDatabase {
   // -------------------------------------------------------------------------
 
   Future<void> setFavorite(int trackId, bool favorite) =>
-      (update(tracks)..where((t) => t.id.equals(trackId)))
-          .write(TracksCompanion(isFavorite: Value(favorite)));
+      (update(tracks)..where((t) => t.id.equals(trackId))).write(
+        TracksCompanion(isFavorite: Value(favorite)),
+      );
 
   Stream<List<Track>> watchFavorites() {
     return (select(tracks)
@@ -348,8 +472,11 @@ class AppDatabase extends _$AppDatabase {
 
   Stream<List<Track>> watchMostPlayed({int limit = 100}) {
     return (select(tracks)
-          ..where((t) =>
-              t.isDeleted.equals(false) & t.totalPlayCount.isBiggerThanValue(0))
+          ..where(
+            (t) =>
+                t.isDeleted.equals(false) &
+                t.totalPlayCount.isBiggerThanValue(0),
+          )
           ..orderBy([
             (t) => OrderingTerm.desc(t.totalPlayCount),
             (t) => OrderingTerm.asc(t.title.collate(Collate.noCase)),
@@ -372,11 +499,20 @@ class AppDatabase extends _$AppDatabase {
     final art = tracks.coverArtPath.max();
     final anyArtist = tracks.artist.min();
     final artistCount = tracks.artist.count(distinct: true);
+    final identity = coalesce([tracks.albumArtist, tracks.artist]);
 
     final query = selectOnly(tracks)
-      ..addColumns([tracks.album, count, totalMs, art, anyArtist, artistCount])
+      ..addColumns([
+        tracks.album,
+        identity,
+        count,
+        totalMs,
+        art,
+        anyArtist,
+        artistCount,
+      ])
       ..where(tracks.isDeleted.equals(false))
-      ..groupBy([tracks.album])
+      ..groupBy([tracks.album, identity])
       ..orderBy([OrderingTerm.asc(tracks.album.collate(Collate.noCase))]);
 
     if (search.trim().isNotEmpty) {
@@ -389,7 +525,10 @@ class AppDatabase extends _$AppDatabase {
       return AlbumSummary(
         album: row.read(tracks.album) ?? '',
         artist:
-            distinctArtists > 1 ? 'Various artists' : (row.read(anyArtist) ?? ''),
+            row.read(identity) ??
+            (distinctArtists > 1
+                ? 'Various artists'
+                : (row.read(anyArtist) ?? '')),
         trackCount: row.read(count) ?? 0,
         totalMs: row.read(totalMs) ?? 0,
         coverArtPath: row.read(art),
@@ -414,21 +553,30 @@ class AppDatabase extends _$AppDatabase {
     }
 
     return query
-        .map((row) => ArtistSummary(
-              artist: row.read(tracks.artist) ?? '',
-              trackCount: row.read(count) ?? 0,
-              albumCount: row.read(albumCount) ?? 0,
-              totalMs: row.read(totalMs) ?? 0,
-              coverArtPath: row.read(art),
-            ))
+        .map(
+          (row) => ArtistSummary(
+            artist: row.read(tracks.artist) ?? '',
+            trackCount: row.read(count) ?? 0,
+            albumCount: row.read(albumCount) ?? 0,
+            totalMs: row.read(totalMs) ?? 0,
+            coverArtPath: row.read(art),
+          ),
+        )
         .watch();
   }
 
   /// Album running order: disc, then track number, falling back to title for
   /// files whose tags carry no numbering.
-  Stream<List<Track>> watchAlbumTracks(String album) {
+  Stream<List<Track>> watchAlbumTracks(String album, {String? albumArtist}) {
     return (select(tracks)
-          ..where((t) => t.isDeleted.equals(false) & t.album.equals(album))
+          ..where(
+            (t) =>
+                t.isDeleted.equals(false) &
+                t.album.equals(album) &
+                (albumArtist == null
+                    ? const Constant(true)
+                    : coalesce([t.albumArtist, t.artist]).equals(albumArtist)),
+          )
           ..orderBy([
             (t) => OrderingTerm.asc(t.discNumber),
             (t) => OrderingTerm.asc(t.trackNumber),
@@ -467,8 +615,9 @@ class AppDatabase extends _$AppDatabase {
             trackCount: entry.value,
           ),
       ];
-      folders
-          .sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+      folders.sort(
+        (a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()),
+      );
       return folders;
     });
   }
@@ -491,6 +640,33 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  Stream<List<Track>> watchRules(SmartRules rules) => watchLibrary().map(
+    (rows) => rows.where((track) => rules.matches(track)).toList(),
+  );
+
+  Stream<List<Track>> watchGenre(String genre) => (select(
+    tracks,
+  )..where((t) => t.isDeleted.equals(false) & t.genre.equals(genre))).watch();
+
+  Stream<List<Track>> watchYear(int year) => (select(
+    tracks,
+  )..where((t) => t.isDeleted.equals(false) & t.year.equals(year))).watch();
+
+  Future<void> softDeleteMany(List<int> ids, {bool deleted = true}) async {
+    await transaction(() async {
+      for (final id in ids) {
+        await (update(tracks)..where((t) => t.id.equals(id))).write(
+          TracksCompanion(isDeleted: Value(deleted)),
+        );
+      }
+    });
+  }
+
+  Future<void> setRating(int id, int rating) =>
+      (update(tracks)..where((t) => t.id.equals(id))).write(
+        TracksCompanion(rating: Value(rating.clamp(0, 5))),
+      );
+
   // -------------------------------------------------------------------------
   // Removed tracks (soft-deleted)
   // -------------------------------------------------------------------------
@@ -503,26 +679,31 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> restoreTrack(int trackId) =>
-      (update(tracks)..where((t) => t.id.equals(trackId)))
-          .write(const TracksCompanion(isDeleted: Value(false)));
+      (update(tracks)..where((t) => t.id.equals(trackId))).write(
+        const TracksCompanion(isDeleted: Value(false)),
+      );
 
   /// Permanently drop a library row and everything referencing it. Does not
   /// touch the audio file on disk.
   Future<void> purgeTrack(int trackId) async {
     await transaction(() async {
-      await (delete(playlistTracks)..where((pt) => pt.trackId.equals(trackId)))
-          .go();
-      await (delete(playbackHistory)..where((h) => h.trackId.equals(trackId)))
-          .go();
-      await (delete(listeningSessions)..where((s) => s.trackId.equals(trackId)))
-          .go();
+      await (delete(
+        playlistTracks,
+      )..where((pt) => pt.trackId.equals(trackId))).go();
+      await (delete(
+        playbackHistory,
+      )..where((h) => h.trackId.equals(trackId))).go();
+      await (delete(
+        listeningSessions,
+      )..where((s) => s.trackId.equals(trackId))).go();
       await (delete(tracks)..where((t) => t.id.equals(trackId))).go();
     });
   }
 
   Future<int> emptyTrash() async {
-    final removed =
-        await (select(tracks)..where((t) => t.isDeleted.equals(true))).get();
+    final removed = await (select(
+      tracks,
+    )..where((t) => t.isDeleted.equals(true))).get();
     for (final track in removed) {
       await purgeTrack(track.id);
     }
@@ -556,10 +737,12 @@ class AppDatabase extends _$AppDatabase {
     await transaction(() async {
       await delete(playbackHistory).go();
       await delete(listeningSessions).go();
-      await update(tracks).write(const TracksCompanion(
-        totalPlayCount: Value(0),
-        lastPlayed: Value(null),
-      ));
+      await update(tracks).write(
+        const TracksCompanion(
+          totalPlayCount: Value(0),
+          lastPlayed: Value(null),
+        ),
+      );
     });
   }
 
@@ -571,17 +754,21 @@ class AppDatabase extends _$AppDatabase {
   /// the audio started — and the date is what the monthly/yearly stats filter
   /// on.
   Future<int> startListeningSession(int trackId, {DateTime? startedAt}) =>
-      into(listeningSessions).insert(ListeningSessionsCompanion(
-        trackId: Value(trackId),
-        startedAt:
-            startedAt == null ? const Value.absent() : Value(startedAt),
-      ));
+      into(listeningSessions).insert(
+        ListeningSessionsCompanion(
+          trackId: Value(trackId),
+          startedAt: startedAt == null
+              ? const Value.absent()
+              : Value(startedAt),
+        ),
+      );
 
   /// Absolute value, not a delta — the caller owns the running total, so a
   /// dropped write costs precision rather than corrupting the count.
   Future<void> saveListenedMs(int sessionId, int listenedMs) =>
-      (update(listeningSessions)..where((s) => s.id.equals(sessionId)))
-          .write(ListeningSessionsCompanion(listenedMs: Value(listenedMs)));
+      (update(listeningSessions)..where((s) => s.id.equals(sessionId))).write(
+        ListeningSessionsCompanion(listenedMs: Value(listenedMs)),
+      );
 
   Expression<bool> _listenedInRange(DateTime? from, DateTime? to) {
     Expression<bool> expr = const Constant(true);
@@ -603,23 +790,26 @@ class AppDatabase extends _$AppDatabase {
     int limit = 10,
   }) {
     final listened = listeningSessions.listenedMs.sum();
-    final query = select(tracks).join([
-      innerJoin(
-        listeningSessions,
-        listeningSessions.trackId.equalsExp(tracks.id),
-        useColumns: false,
-      ),
-    ])
-      ..addColumns([listened])
-      ..where(_listenedInRange(from, to))
-      ..groupBy([tracks.id])
-      ..orderBy([OrderingTerm.desc(listened)])
-      ..limit(limit);
+    final query =
+        select(tracks).join([
+            innerJoin(
+              listeningSessions,
+              listeningSessions.trackId.equalsExp(tracks.id),
+              useColumns: false,
+            ),
+          ])
+          ..addColumns([listened])
+          ..where(_listenedInRange(from, to))
+          ..groupBy([tracks.id])
+          ..orderBy([OrderingTerm.desc(listened)])
+          ..limit(limit);
     return query
-        .map((row) => TrackListeningStat(
-              track: row.readTable(tracks),
-              listenedMs: row.read(listened) ?? 0,
-            ))
+        .map(
+          (row) => TrackListeningStat(
+            track: row.readTable(tracks),
+            listenedMs: row.read(listened) ?? 0,
+          ),
+        )
         .watch();
   }
 
@@ -686,18 +876,20 @@ class AppDatabase extends _$AppDatabase {
       ''',
       variables: variables,
       readsFrom: {tracks, playbackHistory, listeningSessions},
-    ).watch().map((rows) => [
-          for (final row in rows)
-            SongStat(
-              track: tracks.map(row.data),
-              plays: row.read<int>('stat_plays'),
-              listenedMs: row.read<int>('stat_listened'),
-              starts: row.read<int>('stat_starts'),
-              skips: row.read<int>('stat_skips'),
-              firstPlayed: row.readNullable<DateTime>('stat_first_played'),
-              lastPlayed: row.readNullable<DateTime>('stat_last_played'),
-            ),
-        ]);
+    ).watch().map(
+      (rows) => [
+        for (final row in rows)
+          SongStat(
+            track: tracks.map(row.data),
+            plays: row.read<int>('stat_plays'),
+            listenedMs: row.read<int>('stat_listened'),
+            starts: row.read<int>('stat_starts'),
+            skips: row.read<int>('stat_skips'),
+            firstPlayed: row.readNullable<DateTime>('stat_first_played'),
+            lastPlayed: row.readNullable<DateTime>('stat_last_played'),
+          ),
+      ],
+    );
   }
 
   /// Every booked play of one track, oldest first.
@@ -725,17 +917,21 @@ class AppDatabase extends _$AppDatabase {
       into(playlists).insert(PlaylistsCompanion.insert(name: name));
 
   Future<void> renamePlaylist(int id, String name) =>
-      (update(playlists)..where((pl) => pl.id.equals(id)))
-          .write(PlaylistsCompanion(name: Value(name)));
+      (update(playlists)..where((pl) => pl.id.equals(id))).write(
+        PlaylistsCompanion(name: Value(name)),
+      );
 
   /// Playlist contents in their manual order.
   Stream<List<Track>> watchPlaylistTracks(int playlistId) {
-    final query = select(playlistTracks).join([
-      innerJoin(tracks, tracks.id.equalsExp(playlistTracks.trackId)),
-    ])
-      ..where(playlistTracks.playlistId.equals(playlistId) &
-          tracks.isDeleted.equals(false))
-      ..orderBy([OrderingTerm.asc(playlistTracks.position)]);
+    final query =
+        select(playlistTracks).join([
+            innerJoin(tracks, tracks.id.equalsExp(playlistTracks.trackId)),
+          ])
+          ..where(
+            playlistTracks.playlistId.equals(playlistId) &
+                tracks.isDeleted.equals(false),
+          )
+          ..orderBy([OrderingTerm.asc(playlistTracks.position)]);
     return query.map((row) => row.readTable(tracks)).watch();
   }
 
@@ -777,11 +973,13 @@ class AppDatabase extends _$AppDatabase {
         // add() is false when the id is already a member, or repeated in the
         // incoming list — either way it must not get a second row.
         if (!existing.add(trackId)) continue;
-        rows.add(PlaylistTracksCompanion(
-          playlistId: Value(playlistId),
-          trackId: Value(trackId),
-          position: Value(position++),
-        ));
+        rows.add(
+          PlaylistTracksCompanion(
+            playlistId: Value(playlistId),
+            trackId: Value(trackId),
+            position: Value(position++),
+          ),
+        );
       }
       if (rows.isNotEmpty) {
         await batch((b) => b.insertAll(playlistTracks, rows));
@@ -791,11 +989,12 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<Set<int>> playlistTrackIds(int playlistId) async {
-    final ids = await (selectOnly(playlistTracks)
-          ..addColumns([playlistTracks.trackId])
-          ..where(playlistTracks.playlistId.equals(playlistId)))
-        .map((row) => row.read(playlistTracks.trackId)!)
-        .get();
+    final ids =
+        await (selectOnly(playlistTracks)
+              ..addColumns([playlistTracks.trackId])
+              ..where(playlistTracks.playlistId.equals(playlistId)))
+            .map((row) => row.read(playlistTracks.trackId)!)
+            .get();
     return ids.toSet();
   }
 
@@ -812,9 +1011,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> removeTrackFromPlaylist(int playlistId, int trackId) async {
-    await (delete(playlistTracks)
-          ..where((pt) =>
-              pt.playlistId.equals(playlistId) & pt.trackId.equals(trackId)))
+    await (delete(playlistTracks)..where(
+          (pt) => pt.playlistId.equals(playlistId) & pt.trackId.equals(trackId),
+        ))
         .go();
     await _normalizePositions(playlistId);
   }
@@ -823,27 +1022,30 @@ class AppDatabase extends _$AppDatabase {
   Future<void> reorderPlaylist(int playlistId, List<int> orderedTrackIds) {
     return transaction(() async {
       for (var i = 0; i < orderedTrackIds.length; i++) {
-        await (update(playlistTracks)
-              ..where((pt) =>
+        await (update(playlistTracks)..where(
+              (pt) =>
                   pt.playlistId.equals(playlistId) &
-                  pt.trackId.equals(orderedTrackIds[i])))
+                  pt.trackId.equals(orderedTrackIds[i]),
+            ))
             .write(PlaylistTracksCompanion(position: Value(i)));
       }
     });
   }
 
   Future<void> _normalizePositions(int playlistId) async {
-    final rows = await (select(playlistTracks)
-          ..where((pt) => pt.playlistId.equals(playlistId))
-          ..orderBy([(pt) => OrderingTerm.asc(pt.position)]))
-        .get();
+    final rows =
+        await (select(playlistTracks)
+              ..where((pt) => pt.playlistId.equals(playlistId))
+              ..orderBy([(pt) => OrderingTerm.asc(pt.position)]))
+            .get();
     await transaction(() async {
       for (var i = 0; i < rows.length; i++) {
         if (rows[i].position != i) {
-          await (update(playlistTracks)
-                ..where((pt) =>
+          await (update(playlistTracks)..where(
+                (pt) =>
                     pt.playlistId.equals(playlistId) &
-                    pt.trackId.equals(rows[i].trackId)))
+                    pt.trackId.equals(rows[i].trackId),
+              ))
               .write(PlaylistTracksCompanion(position: Value(i)));
         }
       }
@@ -855,24 +1057,8 @@ class AppDatabase extends _$AppDatabase {
 
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    final docsFolder = await getApplicationDocumentsDirectory();
-    
-    // 1. Define the new Electrowave directory
-    final appFolder = Directory(p.join(docsFolder.path, 'Electrowave'));
-    
-    // 2. Create the directory if it doesn't exist yet
-    if (!await appFolder.exists()) {
-      await appFolder.create(recursive: true);
-    }
-
-    final newDbFile = File(p.join(appFolder.path, 'local_player_db.sqlite'));
-    final oldDbFile = File(p.join(docsFolder.path, 'local_player_db.sqlite'));
-
-    // 3. Auto-Migration: Move the old database to the new folder if it exists
-    if (await oldDbFile.exists() && !await newDbFile.exists()) {
-      await oldDbFile.rename(newDbFile.path);
-    }
-
-    return NativeDatabase.createInBackground(newDbFile);
+    final folder = await appDataDirectory();
+    final file = File(p.join(folder.path, databaseFileName));
+    return NativeDatabase.createInBackground(file);
   });
 }

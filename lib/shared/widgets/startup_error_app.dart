@@ -56,14 +56,20 @@ directly and relaunch:
                   SelectableText(
                     message,
                     style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 12, height: 1.5),
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
                   ),
                   if (Platform.isLinux) ...[
                     const SizedBox(height: 24),
                     const SelectableText(
                       _linuxHint,
                       style: TextStyle(
-                          fontFamily: 'monospace', fontSize: 12, height: 1.5),
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
                     ),
                   ],
                 ],

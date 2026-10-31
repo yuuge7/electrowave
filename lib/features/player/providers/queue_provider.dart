@@ -113,11 +113,10 @@ class QueueNotifier extends Notifier<QueueState> {
 
   /// Moves playback to [index] within the current context.
   void moveToContextIndex(int index) {
-    state = state.copyWith(
-      contextIndex: index,
-      playingFromManualQueue: false,
-    );
+    state = state.copyWith(contextIndex: index, playingFromManualQueue: false);
   }
+
+  void replace(QueueState value) => state = value;
 
   void reset() {
     state = const QueueState();
@@ -139,8 +138,9 @@ class QueueNotifier extends Notifier<QueueState> {
   }
 }
 
-final queueProvider =
-    NotifierProvider<QueueNotifier, QueueState>(QueueNotifier.new);
+final queueProvider = NotifierProvider<QueueNotifier, QueueState>(
+  QueueNotifier.new,
+);
 
 /// Whether the Spotify-style queue side panel is open.
 class QueuePanelVisibleNotifier extends Notifier<bool> {
@@ -154,4 +154,5 @@ class QueuePanelVisibleNotifier extends Notifier<bool> {
 
 final queuePanelVisibleProvider =
     NotifierProvider<QueuePanelVisibleNotifier, bool>(
-        QueuePanelVisibleNotifier.new);
+      QueuePanelVisibleNotifier.new,
+    );

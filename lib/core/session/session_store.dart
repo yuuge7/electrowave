@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../app_paths.dart';
 
 import 'session_snapshot.dart';
 
@@ -11,17 +11,15 @@ import 'session_snapshot.dart';
 /// Electrowave folder.
 ///
 /// Session state is deliberately kept out of the SQLite database: the backup
-/// / import feature swaps the whole database file, and "what was playing on
-/// this machine" should not travel with a library backup.
+/// / import feature swaps the whole database file. Backups archive the session
+/// for completeness, but an imported session is never resumed.
 class SessionStore {
   static const String _fileName = 'session.json';
+  static Future<void> _pending = Future.value();
+  static Future<void> flush() => _pending;
 
   static Future<File> _sessionFile() async {
-    final docsFolder = await getApplicationDocumentsDirectory();
-    final appFolder = Directory(p.join(docsFolder.path, 'Electrowave'));
-    if (!await appFolder.exists()) {
-      await appFolder.create(recursive: true);
-    }
+    final appFolder = await appDataDirectory();
     return File(p.join(appFolder.path, _fileName));
   }
 
@@ -47,7 +45,12 @@ class SessionStore {
 
   /// Writes via a temp file + rename so a crash mid-write can never leave a
   /// truncated session behind.
-  static Future<void> save(SessionSnapshot snapshot) async {
+  static Future<void> save(SessionSnapshot snapshot) {
+    _pending = _pending.then((_) => _save(snapshot));
+    return _pending;
+  }
+
+  static Future<void> _save(SessionSnapshot snapshot) async {
     try {
       final file = await _sessionFile();
       final tempFile = File('${file.path}.tmp');

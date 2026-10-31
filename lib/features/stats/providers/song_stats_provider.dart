@@ -15,8 +15,9 @@ class StatsModeNotifier extends Notifier<StatsMode> {
   void set(StatsMode mode) => state = mode;
 }
 
-final statsModeProvider =
-    NotifierProvider<StatsModeNotifier, StatsMode>(StatsModeNotifier.new);
+final statsModeProvider = NotifierProvider<StatsModeNotifier, StatsMode>(
+  StatsModeNotifier.new,
+);
 
 /// Every library track with its numbers for the period picked in Stats.
 ///
@@ -29,28 +30,38 @@ final songStatsProvider = StreamProvider.autoDispose<List<SongStat>>((ref) {
 });
 
 /// Booked plays of one track, all time, oldest first.
-final trackPlayTimesProvider =
-    StreamProvider.autoDispose.family<List<DateTime>, int>((ref, trackId) {
-  return ref.watch(databaseProvider).watchPlayTimes(trackId);
-});
+final trackPlayTimesProvider = StreamProvider.autoDispose
+    .family<List<DateTime>, int>((ref, trackId) {
+      return ref.watch(databaseProvider).watchPlayTimes(trackId);
+    });
 
 /// Measured listening stretches of one track, all time, oldest first.
 final trackListeningSessionsProvider = StreamProvider.autoDispose
     .family<List<ListeningSessionEntry>, int>((ref, trackId) {
-  return ref.watch(databaseProvider).watchListeningSessionsFor(trackId);
-});
+      return ref.watch(databaseProvider).watchListeningSessionsFor(trackId);
+    });
 
 const _monthNames = [
-  'January', 'February', 'March', 'April', 'May', 'June', 'July',
-  'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
 
 /// "October 2026", "2026" or "All time" for the selected filter.
 String statsPeriodLabel(StatsState state) => switch (state.filter) {
-      StatsFilter.monthly => '${_monthNames[state.month - 1]} ${state.year}',
-      StatsFilter.yearly => '${state.year}',
-      StatsFilter.allTime => 'All time',
-    };
+  StatsFilter.monthly => '${_monthNames[state.month - 1]} ${state.year}',
+  StatsFilter.yearly => '${state.year}',
+  StatsFilter.allTime => 'All time',
+};
 
 /// Listening time with the precision a single song needs: "1h 05m", "12m 30s",
 /// "45s".

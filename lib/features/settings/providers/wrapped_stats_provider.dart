@@ -26,7 +26,11 @@ class StatsNotifier extends Notifier<StatsState> {
   @override
   StatsState build() {
     final now = DateTime.now();
-    return StatsState(filter: StatsFilter.allTime, month: now.month, year: now.year);
+    return StatsState(
+      filter: StatsFilter.allTime,
+      month: now.month,
+      year: now.year,
+    );
   }
 
   void setFilter(StatsFilter filter) => state = state.copyWith(filter: filter);
@@ -34,7 +38,9 @@ class StatsNotifier extends Notifier<StatsState> {
   void setYear(int year) => state = state.copyWith(year: year);
 }
 
-final statsStateProvider = NotifierProvider<StatsNotifier, StatsState>(StatsNotifier.new);
+final statsStateProvider = NotifierProvider<StatsNotifier, StatsState>(
+  StatsNotifier.new,
+);
 
 // --- DATA CLASSES ---
 class TopItem {
@@ -42,14 +48,23 @@ class TopItem {
   final String subtitle;
   final int plays;
   final int durationMs;
-  TopItem({required this.title, required this.subtitle, required this.plays, required this.durationMs});
+  TopItem({
+    required this.title,
+    required this.subtitle,
+    required this.plays,
+    required this.durationMs,
+  });
 }
 
 class WrappedData {
   final int totalDurationMs;
   final List<TopItem> topTracks;
   final List<TopItem> topArtists;
-  WrappedData({required this.totalDurationMs, required this.topTracks, required this.topArtists});
+  WrappedData({
+    required this.totalDurationMs,
+    required this.topTracks,
+    required this.topArtists,
+  });
 }
 
 /// Half-open date range for the selected filter: [from, to).
@@ -59,21 +74,22 @@ class WrappedData {
 ({DateTime? from, DateTime? to}) statsRange(StatsState state) {
   return switch (state.filter) {
     StatsFilter.monthly => (
-        from: DateTime(state.year, state.month, 1),
-        to: DateTime(state.year, state.month + 1, 1),
-      ),
+      from: DateTime(state.year, state.month, 1),
+      to: DateTime(state.year, state.month + 1, 1),
+    ),
     StatsFilter.yearly => (
-        from: DateTime(state.year, 1, 1),
-        to: DateTime(state.year + 1, 1, 1),
-      ),
+      from: DateTime(state.year, 1, 1),
+      to: DateTime(state.year + 1, 1, 1),
+    ),
     StatsFilter.allTime => (from: null, to: null),
   };
 }
 
 /// Tracks ranked by audio that actually played, not by play count — a track
 /// left on repeat outranks one started and skipped many times.
-final listeningTimeStatsProvider =
-    StreamProvider<List<TrackListeningStat>>((ref) {
+final listeningTimeStatsProvider = StreamProvider<List<TrackListeningStat>>((
+  ref,
+) {
   final db = ref.watch(databaseProvider);
   final range = statsRange(ref.watch(statsStateProvider));
   return db.watchTracksByListeningTime(from: range.from, to: range.to);
@@ -98,7 +114,11 @@ final wrappedStatsProvider = FutureProvider<WrappedData>((ref) async {
   // Calculate strict date boundaries based on the selected filter
   if (state.filter == StatsFilter.monthly) {
     start = DateTime(state.year, state.month, 1);
-    end = DateTime(state.year, state.month + 1, 1).subtract(const Duration(seconds: 1));
+    end = DateTime(
+      state.year,
+      state.month + 1,
+      1,
+    ).subtract(const Duration(seconds: 1));
   } else if (state.filter == StatsFilter.yearly) {
     start = DateTime(state.year, 1, 1);
     end = DateTime(state.year + 1, 1, 1).subtract(const Duration(seconds: 1));
@@ -115,15 +135,16 @@ final wrappedStatsProvider = FutureProvider<WrappedData>((ref) async {
   }
 
   // 1. Total Time Query
-  final durationResult = await db.customSelect(
-    'SELECT SUM(t.duration_ms) as total FROM playback_history h INNER JOIN tracks t ON h.track_id = t.id $whereClause',
-    variables: variables,
-  ).getSingle();
+  final durationResult = await db
+      .customSelect(
+        'SELECT SUM(t.duration_ms) as total FROM playback_history h INNER JOIN tracks t ON h.track_id = t.id $whereClause',
+        variables: variables,
+      )
+      .getSingle();
   final totalDuration = durationResult.read<int?>('total') ?? 0;
 
   // 2. Top Tracks Query
-  final tracksResult = await db.customSelect(
-    '''
+  final tracksResult = await db.customSelect('''
     SELECT t.title, t.artist, COUNT(h.id) as plays, SUM(t.duration_ms) as time 
     FROM playback_history h 
     INNER JOIN tracks t ON h.track_id = t.id 
@@ -131,20 +152,21 @@ final wrappedStatsProvider = FutureProvider<WrappedData>((ref) async {
     GROUP BY t.id 
     ORDER BY time DESC 
     LIMIT 10
-    ''',
-    variables: variables,
-  ).get();
-  
-  final topTracks = tracksResult.map((row) => TopItem(
-    title: row.read<String>('title'),
-    subtitle: row.read<String>('artist'),
-    plays: row.read<int>('plays'),
-    durationMs: row.read<int?>('time') ?? 0,
-  )).toList();
+    ''', variables: variables).get();
+
+  final topTracks = tracksResult
+      .map(
+        (row) => TopItem(
+          title: row.read<String>('title'),
+          subtitle: row.read<String>('artist'),
+          plays: row.read<int>('plays'),
+          durationMs: row.read<int?>('time') ?? 0,
+        ),
+      )
+      .toList();
 
   // 3. Top Artists Query
-  final artistsResult = await db.customSelect(
-    '''
+  final artistsResult = await db.customSelect('''
     SELECT t.artist, COUNT(h.id) as plays, SUM(t.duration_ms) as time 
     FROM playback_history h 
     INNER JOIN tracks t ON h.track_id = t.id 
@@ -152,16 +174,22 @@ final wrappedStatsProvider = FutureProvider<WrappedData>((ref) async {
     GROUP BY t.artist 
     ORDER BY time DESC 
     LIMIT 10
-    ''',
-    variables: variables,
-  ).get();
+    ''', variables: variables).get();
 
-  final topArtists = artistsResult.map((row) => TopItem(
-    title: row.read<String>('artist'),
-    subtitle: 'Artist',
-    plays: row.read<int>('plays'),
-    durationMs: row.read<int?>('time') ?? 0,
-  )).toList();
+  final topArtists = artistsResult
+      .map(
+        (row) => TopItem(
+          title: row.read<String>('artist'),
+          subtitle: 'Artist',
+          plays: row.read<int>('plays'),
+          durationMs: row.read<int?>('time') ?? 0,
+        ),
+      )
+      .toList();
 
-  return WrappedData(totalDurationMs: totalDuration, topTracks: topTracks, topArtists: topArtists);
+  return WrappedData(
+    totalDurationMs: totalDuration,
+    topTracks: topTracks,
+    topArtists: topArtists,
+  );
 });

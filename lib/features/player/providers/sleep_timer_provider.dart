@@ -32,7 +32,8 @@ class SleepTimerState {
 /// Null when no timer is running.
 final sleepTimerProvider =
     NotifierProvider<SleepTimerNotifier, SleepTimerState?>(
-        SleepTimerNotifier.new);
+      SleepTimerNotifier.new,
+    );
 
 class SleepTimerNotifier extends Notifier<SleepTimerState?> {
   Timer? _ticker;
@@ -131,8 +132,10 @@ class SleepTimerNotifier extends Notifier<SleepTimerState?> {
 
   void _applyFade(Duration left) {
     _fading = true;
-    final fraction =
-        (left.inMilliseconds / _fadeWindow.inMilliseconds).clamp(0.0, 1.0);
+    final fraction = (left.inMilliseconds / _fadeWindow.inMilliseconds).clamp(
+      0.0,
+      1.0,
+    );
     unawaited(ref.read(playerProvider).setVolume(_baseVolume * fraction));
   }
 

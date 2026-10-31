@@ -10,5 +10,6 @@ class TrayReadyNotifier extends Notifier<bool> {
   void set(bool value) => state = value;
 }
 
-final trayReadyProvider =
-    NotifierProvider<TrayReadyNotifier, bool>(TrayReadyNotifier.new);
+final trayReadyProvider = NotifierProvider<TrayReadyNotifier, bool>(
+  TrayReadyNotifier.new,
+);

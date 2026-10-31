@@ -1,22 +1,17 @@
-import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' as drift;
-
 import '../../../core/database/app_database.dart' as db;
-import '../../../main.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../player/providers/player_provider.dart';
 import '../../player/providers/queue_provider.dart';
+import '../services/tag_writer.dart';
 import 'add_to_playlist_dialog.dart';
-import 'tag_editor_dialog.dart';
+import 'bulk_tag_editor.dart';
+import 'track_actions.dart';
 
-/// The library's track list, shared by the flat library, the album / artist /
-/// folder detail views and the smart lists.
-///
-/// Clicking a row makes [tracks] the playback context, so next/previous stay
-/// inside exactly the list on screen.
-class TrackTable extends ConsumerWidget {
+/// Virtualized rows keep a 50,000-track library from constructing 50,000 widgets.
+class TrackTable extends ConsumerStatefulWidget {
   const TrackTable({
     super.key,
     required this.tracks,
@@ -24,216 +19,409 @@ class TrackTable extends ConsumerWidget {
     this.showAlbum = true,
     this.onRemoveFromPlaylist,
   });
-
   final List<db.Track> tracks;
   final String emptyMessage;
   final bool showAlbum;
+  final void Function(db.Track)? onRemoveFromPlaylist;
+  @override
+  ConsumerState<TrackTable> createState() => _TrackTableState();
+}
 
-  /// When set, the row menu offers removing the track from the playlist being
-  /// shown instead of only the library-wide actions.
-  final void Function(db.Track track)? onRemoveFromPlaylist;
-
-  String _formatDurationMs(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes.toString().padLeft(2, '0');
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
+class _TrackTableState extends ConsumerState<TrackTable> {
+  final Set<int> _selected = {};
+  int _anchor = 0;
+  final _focus = FocusNode(debugLabel: 'Track list');
+  final _scroll = ScrollController();
+  bool? _clickShift, _clickControl;
+  @override
+  void dispose() {
+    _focus.dispose();
+    _scroll.dispose();
+    super.dispose();
   }
 
-  void _showTrackMenu(
-    BuildContext context,
-    WidgetRef ref,
-    db.Track track,
-    Offset position,
-  ) {
-    final colors = context.colors;
-    showMenu<String>(
-      context: context,
-      color: colors.surfaceAlt,
-      position: RelativeRect.fromLTRB(
-          position.dx, position.dy, position.dx, position.dy),
-      items: [
-        _menuItem('play_next', Icons.playlist_play, 'Play next', colors),
-        _menuItem('queue', Icons.queue_music, 'Add to queue', colors),
-        _menuItem(
-          'favorite',
-          track.isFavorite ? Icons.favorite : Icons.favorite_border,
-          track.isFavorite ? 'Remove from favorites' : 'Add to favorites',
-          colors,
-        ),
-        _menuItem('tags', Icons.edit_note, 'Edit tags…', colors),
-        _menuItem('playlist', Icons.playlist_add, 'Add to playlist…', colors),
-        if (onRemoveFromPlaylist != null)
-          _menuItem('remove_from_playlist', Icons.playlist_remove,
-              'Remove from playlist', colors),
-      ],
-    ).then((value) {
-      if (!context.mounted) return;
-      switch (value) {
-        case 'play_next':
-          ref.read(queueProvider.notifier).playNext(track);
-        case 'queue':
-          ref.read(queueProvider.notifier).addToQueue(track);
-        case 'favorite':
-          ref
-              .read(databaseProvider)
-              .setFavorite(track.id, !track.isFavorite);
-        case 'tags':
-          showDialog(
-            context: context,
-            builder: (context) => TagEditorDialog(track: track),
-          );
-        case 'playlist':
-          showDialog(
-            context: context,
-            builder: (context) => AddToPlaylistDialog(track: track),
-          );
-        case 'remove_from_playlist':
-          onRemoveFromPlaylist?.call(track);
+  List<db.Track> get selected =>
+      widget.tracks.where((t) => _selected.contains(t.id)).toList();
+  void _select(int index) {
+    final keyboard = HardwareKeyboard.instance;
+    setState(() {
+      if (_clickShift ?? keyboard.isShiftPressed) {
+        final start = _anchor < index ? _anchor : index,
+            end = _anchor > index ? _anchor : index;
+        for (
+          var i = start.clamp(0, widget.tracks.length - 1);
+          i <= end && i < widget.tracks.length;
+          i++
+        ) {
+          _selected.add(widget.tracks[i].id);
+        }
+      } else if (_clickControl ??
+          (keyboard.isControlPressed || keyboard.isMetaPressed)) {
+        final id = widget.tracks[index].id;
+        if (!_selected.add(id)) _selected.remove(id);
+        _anchor = index;
+      } else {
+        _selected
+          ..clear()
+          ..add(widget.tracks[index].id);
+        _anchor = index;
       }
+      _clickShift = null;
+      _clickControl = null;
     });
+    _focus.requestFocus();
   }
 
-  PopupMenuItem<String> _menuItem(
-    String value,
-    IconData icon,
-    String label,
-    ElectrowaveColors colors,
-  ) {
-    return PopupMenuItem(
-      value: value,
-      child: Row(
-        children: [
-          Icon(icon, color: colors.textSecondary, size: 18),
-          const SizedBox(width: 10),
-          Text(label, style: TextStyle(color: colors.textSecondary)),
-        ],
-      ),
-    );
-  }
-
-  DataCell _cell(
-    BuildContext context,
-    WidgetRef ref,
-    db.Track track,
-    String text,
-  ) {
-    return DataCell(
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onSecondaryTapDown: (details) =>
-            _showTrackMenu(context, ref, track, details.globalPosition),
-        child: Container(
-          alignment: Alignment.centerLeft,
-          child: Text(text, style: TextStyle(color: context.colors.textSecondary)),
-        ),
-      ),
-    );
-  }
-
-  void _confirmDeleteTrack(
-      BuildContext context, WidgetRef ref, db.Track track) {
-    final colors = context.colors;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text('Delete Track', style: TextStyle(color: colors.textPrimary)),
-        content: Text(
-          'Remove "${track.title}" from your library?\n\n'
-          'The audio file is left untouched and the track can be restored '
-          'from Settings → Removed tracks.',
-          style: TextStyle(color: colors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: colors.textFaint)),
+  Future<void> _remove() async {
+    final tracks = selected;
+    if (tracks.isEmpty) return;
+    final database = ref.read(tagWriterProvider).database;
+    if (widget.onRemoveFromPlaylist != null) {
+      for (final track in tracks) {
+        widget.onRemoveFromPlaylist!(track);
+      }
+    } else {
+      await database.softDeleteMany(tracks.map((t) => t.id).toList());
+      if (mounted) {
+        showUndo(
+          context,
+          'Removed ${tracks.length} tracks.',
+          () => database.softDeleteMany(
+            tracks.map((t) => t.id).toList(),
+            deleted: false,
           ),
-          TextButton(
-            onPressed: () async {
-              final database = ref.read(databaseProvider);
-              // SOFT DELETE: hide the track without destroying its stats.
-              await (database.update(database.tracks)
-                    ..where((t) => t.id.equals(track.id)))
-                  .write(
-                const db.TracksCompanion(isDeleted: drift.Value(true)),
-              );
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      ),
-    );
+        );
+      }
+    }
+    if (mounted) setState(_selected.clear);
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final colors = context.colors;
-
-    if (tracks.isEmpty) {
-      return Center(
-        child: Text(emptyMessage, style: TextStyle(color: colors.textFaint)),
-      );
-    }
-
-    final headerStyle = TextStyle(color: colors.textPrimary);
-
-    return DataTable2(
-      columnSpacing: 12,
-      horizontalMargin: 16,
-      columns: [
-        DataColumn2(label: Text('Title', style: headerStyle), size: ColumnSize.L),
-        DataColumn2(label: Text('Artist', style: headerStyle)),
-        if (showAlbum) DataColumn2(label: Text('Album', style: headerStyle)),
-        DataColumn2(
-            label: Text('Duration', style: headerStyle), size: ColumnSize.S),
-        const DataColumn2(label: Text(''), size: ColumnSize.S, fixedWidth: 96),
-      ],
-      rows: List<DataRow>.generate(tracks.length, (index) {
-        final track = tracks[index];
-        return DataRow(
-          onSelectChanged: (selected) {
-            if (selected ?? false) {
-              ref
-                  .read(playbackControllerProvider)
-                  .playFromContext(tracks, index);
-            }
-          },
-          cells: [
-            _cell(context, ref, track, track.title),
-            _cell(context, ref, track, track.artist),
-            if (showAlbum) _cell(context, ref, track, track.album),
-            _cell(context, ref, track, _formatDurationMs(track.durationMs)),
-            DataCell(Row(
-              mainAxisSize: MainAxisSize.min,
+    final current = ref.watch(currentTrackProvider)?.id;
+    if (widget.tracks.isEmpty) return Center(child: Text(widget.emptyMessage));
+    final chosen = selected;
+    return Focus(
+      focusNode: _focus,
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (HardwareKeyboard.instance.isControlPressed &&
+            event.logicalKey == LogicalKeyboardKey.keyA) {
+          setState(() => _selected.addAll(widget.tracks.map((t) => t.id)));
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.enter &&
+            widget.tracks.isNotEmpty) {
+          ref
+              .read(playbackControllerProvider)
+              .playFromContext(
+                widget.tracks,
+                _anchor.clamp(0, widget.tracks.length - 1),
+              );
+          return KeyEventResult.handled;
+        }
+        if (!HardwareKeyboard.instance.isControlPressed &&
+            (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+                event.logicalKey == LogicalKeyboardKey.arrowDown)) {
+          final index =
+              (_anchor +
+                      (event.logicalKey == LogicalKeyboardKey.arrowDown
+                          ? 1
+                          : -1))
+                  .clamp(0, widget.tracks.length - 1);
+          _select(index);
+          if (_scroll.hasClients) {
+            _scroll.jumpTo(
+              (index * 54.0 - _scroll.position.viewportDimension / 2).clamp(
+                0,
+                _scroll.position.maxScrollExtent,
+              ),
+            );
+          }
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.delete) {
+          _remove();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.escape) {
+          setState(_selected.clear);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Column(
+        children: [
+          if (chosen.isNotEmpty)
+            Material(
+              color: colors.surfaceAlt,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  children: [
+                    Text('${chosen.length} selected'),
+                    IconButton(
+                      tooltip: 'Clear selection',
+                      onPressed: () => setState(_selected.clear),
+                      icon: const Icon(Icons.close),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => showDialog(
+                        context: context,
+                        builder: (_) => AddToPlaylistDialog(tracks: chosen),
+                      ),
+                      icon: const Icon(Icons.playlist_add),
+                      label: const Text('Playlist'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        for (final t in chosen) {
+                          ref.read(queueProvider.notifier).addToQueue(t);
+                        }
+                      },
+                      icon: const Icon(Icons.queue_music),
+                      label: const Text('Queue'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () async {
+                        for (final t in chosen) {
+                          await ref
+                              .read(tagWriterProvider)
+                              .database
+                              .setFavorite(t.id, true);
+                        }
+                      },
+                      icon: const Icon(Icons.favorite),
+                      label: const Text('Favorite'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => showDialog(
+                        context: context,
+                        builder: (_) => BulkTagEditor(tracks: chosen),
+                      ),
+                      icon: const Icon(Icons.edit),
+                      label: const Text('Edit tags'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _remove,
+                      icon: const Icon(Icons.remove_circle_outline),
+                      label: const Text('Remove'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(48, 8, 16, 8),
+            child: Row(
               children: [
-                IconButton(
-                  tooltip: track.isFavorite
-                      ? 'Remove from favorites'
-                      : 'Add to favorites',
-                  icon: Icon(
-                    track.isFavorite ? Icons.favorite : Icons.favorite_border,
-                    size: 18,
-                  ),
-                  color: track.isFavorite ? colors.accent : colors.textFaint,
-                  onPressed: () => ref
-                      .read(databaseProvider)
-                      .setFavorite(track.id, !track.isFavorite),
-                ),
-                IconButton(
-                  tooltip: 'Remove from library',
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  color: colors.textFaint,
-                  onPressed: () => _confirmDeleteTrack(context, ref, track),
-                  hoverColor: Colors.redAccent.withValues(alpha: 0.1),
-                ),
+                const Expanded(flex: 3, child: Text('Title')),
+                const Expanded(flex: 2, child: Text('Artist')),
+                if (widget.showAlbum)
+                  const Expanded(flex: 2, child: Text('Album')),
+                const SizedBox(width: 80, child: Text('Rating')),
+                const SizedBox(width: 60, child: Text('Time')),
+                const SizedBox(width: 78),
               ],
-            )),
-          ],
-        );
-      }),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemExtent: 54,
+              itemCount: widget.tracks.length,
+              itemBuilder: (context, index) {
+                final track = widget.tracks[index];
+                final color = track.isMissing
+                    ? colors.textFaint
+                    : (track.id == current
+                          ? colors.accent
+                          : colors.textPrimary);
+                Widget label(String text, {int flex = 2}) => Expanded(
+                  flex: flex,
+                  child: Text(
+                    text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: color),
+                  ),
+                );
+                return Semantics(
+                  selected: _selected.contains(track.id),
+                  label:
+                      '${track.title}, ${track.artist}${track.isMissing ? ', file missing' : ''}',
+                  child: Material(
+                    color: _selected.contains(track.id)
+                        ? colors.accent.withValues(alpha: 0.13)
+                        : Colors.transparent,
+                    child: InkWell(
+                      onTapDown: (_) {
+                        _clickShift = HardwareKeyboard.instance.isShiftPressed;
+                        _clickControl =
+                            HardwareKeyboard.instance.isControlPressed ||
+                            HardwareKeyboard.instance.isMetaPressed;
+                      },
+                      onTap: () => _select(index),
+                      onDoubleTap: track.isMissing
+                          ? null
+                          : () => ref
+                                .read(playbackControllerProvider)
+                                .playFromContext(widget.tracks, index),
+                      onSecondaryTapDown: (d) {
+                        if (!_selected.contains(track.id)) {
+                          setState(
+                            () => _selected
+                              ..clear()
+                              ..add(track.id),
+                          );
+                        }
+                        showTrackActions(
+                          context,
+                          ref,
+                          selected,
+                          d.globalPosition,
+                          removeFromPlaylist:
+                              widget.onRemoveFromPlaylist == null
+                              ? null
+                              : () async {
+                                  for (final t in selected) {
+                                    widget.onRemoveFromPlaylist!(t);
+                                  }
+                                },
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              tooltip: track.isMissing
+                                  ? 'File missing'
+                                  : 'Play ${track.title}',
+                              icon: Icon(
+                                track.isMissing
+                                    ? Icons.link_off
+                                    : track.id == current
+                                    ? Icons.equalizer
+                                    : Icons.play_arrow,
+                                size: 18,
+                                color: color,
+                              ),
+                              onPressed: track.isMissing
+                                  ? null
+                                  : () => ref
+                                        .read(playbackControllerProvider)
+                                        .playFromContext(widget.tracks, index),
+                            ),
+                            label(track.title, flex: 3),
+                            label(track.artist),
+                            if (widget.showAlbum) label(track.album),
+                            SizedBox(
+                              width: 80,
+                              child: PopupMenuButton<int>(
+                                tooltip: 'Rate ${track.title}',
+                                initialValue: track.rating,
+                                onSelected: (rating) async {
+                                  final error = await ref
+                                      .read(tagWriterProvider)
+                                      .apply(track, TagEdit(rating: rating));
+                                  if (error != null && context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(error)),
+                                    );
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  for (var i = 0; i <= 5; i++)
+                                    PopupMenuItem(
+                                      value: i,
+                                      child: Text(
+                                        i == 0 ? 'Unrated' : '$i stars',
+                                      ),
+                                    ),
+                                ],
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (track.rating == 0)
+                                        Icon(
+                                          Icons.star_border,
+                                          size: 16,
+                                          color: colors.textFaint,
+                                        )
+                                      else
+                                        for (var i = 0; i < track.rating; i++)
+                                          Icon(
+                                            Icons.star,
+                                            size: 12,
+                                            color: colors.accent,
+                                          ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 60,
+                              child: Text(
+                                '${track.durationMs ~/ 60000}:${((track.durationMs ~/ 1000) % 60).toString().padLeft(2, '0')}',
+                                style: TextStyle(color: colors.textFaint),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: track.isFavorite
+                                  ? 'Remove favorite'
+                                  : 'Favorite',
+                              icon: Icon(
+                                track.isFavorite
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                                size: 18,
+                              ),
+                              color: track.isFavorite
+                                  ? colors.accent
+                                  : colors.textFaint,
+                              onPressed: () => ref
+                                  .read(tagWriterProvider)
+                                  .database
+                                  .setFavorite(track.id, !track.isFavorite),
+                            ),
+                            PopupMenuButton<String>(
+                              tooltip: 'Track actions',
+                              itemBuilder: (_) => [
+                                const PopupMenuItem(
+                                  value: 'actions',
+                                  child: Text('More actions...'),
+                                ),
+                              ],
+                              onSelected: (_) {
+                                final box =
+                                    context.findRenderObject() as RenderBox;
+                                showTrackActions(context, ref, [
+                                  track,
+                                ], box.localToGlobal(Offset.zero));
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

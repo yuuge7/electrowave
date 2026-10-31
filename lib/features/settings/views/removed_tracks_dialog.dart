@@ -1,3 +1,4 @@
+import '../../../shared/widgets/retry_message.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,7 +22,10 @@ class RemovedTracksDialog extends ConsumerWidget {
     return AlertDialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('Removed tracks', style: TextStyle(color: colors.textPrimary)),
+      title: Text(
+        'Removed tracks',
+        style: TextStyle(color: colors.textPrimary),
+      ),
       content: SizedBox(
         width: 520,
         height: 420,
@@ -29,8 +33,10 @@ class RemovedTracksDialog extends ConsumerWidget {
           data: (tracks) {
             if (tracks.isEmpty) {
               return Center(
-                child: Text('Nothing has been removed.',
-                    style: TextStyle(color: colors.textFaint)),
+                child: Text(
+                  'Nothing has been removed.',
+                  style: TextStyle(color: colors.textFaint),
+                ),
               );
             }
             return ListView.separated(
@@ -40,27 +46,35 @@ class RemovedTracksDialog extends ConsumerWidget {
               itemBuilder: (context, index) {
                 final track = tracks[index];
                 return ListTile(
-                  title: Text(track.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colors.textPrimary)),
-                  subtitle: Text('${track.artist} • ${track.album}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          TextStyle(color: colors.textFaint, fontSize: 12)),
+                  title: Text(
+                    track.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: colors.textPrimary),
+                  ),
+                  subtitle: Text(
+                    '${track.artist} • ${track.album}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: colors.textFaint, fontSize: 12),
+                  ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       TextButton(
                         onPressed: () => database.restoreTrack(track.id),
-                        child: Text('Restore',
-                            style: TextStyle(color: colors.accent)),
+                        child: Text(
+                          'Restore',
+                          style: TextStyle(color: colors.accent),
+                        ),
                       ),
                       IconButton(
                         tooltip: 'Delete permanently (keeps the file on disk)',
-                        icon: const Icon(Icons.delete_forever,
-                            color: Colors.redAccent, size: 20),
+                        icon: const Icon(
+                          Icons.delete_forever,
+                          color: Colors.redAccent,
+                          size: 20,
+                        ),
                         onPressed: () => database.purgeTrack(track.id),
                       ),
                     ],
@@ -71,9 +85,9 @@ class RemovedTracksDialog extends ConsumerWidget {
           },
           loading: () =>
               Center(child: CircularProgressIndicator(color: colors.accent)),
-          error: (err, stack) => Center(
-              child:
-                  Text('Error: $err', style: const TextStyle(color: Colors.red))),
+          error: (err, stack) => RetryMessage(
+            onRetry: () => ref.invalidate(deletedTracksProvider),
+          ),
         ),
       ),
       actions: [
@@ -88,14 +102,17 @@ class RemovedTracksDialog extends ConsumerWidget {
               ),
             );
           },
-          child: const Text('Empty list',
-              style: TextStyle(color: Colors.redAccent)),
+          child: const Text(
+            'Empty list',
+            style: TextStyle(color: Colors.redAccent),
+          ),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('Close',
-              style:
-                  TextStyle(color: colors.accent, fontWeight: FontWeight.bold)),
+          child: Text(
+            'Close',
+            style: TextStyle(color: colors.accent, fontWeight: FontWeight.bold),
+          ),
         ),
       ],
     );

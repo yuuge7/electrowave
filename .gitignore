@@ -43,9 +43,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Desktop-only repository; Flutter tooling can recreate ignored mobile files.
+/android/
+/ios/
 
 # Ignore all SQLite database files and backups
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.ewbackup
 *.db
 *.db-shm
 *.db-wal
@@ -60,3 +66,14 @@ app.*.map.json
 *.wav
 *.ogg
 *.m4a
+*.opus
+*.aac
+*.aiff
+*.wma
+*.ape
+*.wv
+*.mka
+*.dsf
+
+# Portable libraries are personal data, never repository content.
+ElectrowaveData/

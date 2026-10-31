@@ -1,3 +1,4 @@
+import '../../../core/smart_rules.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../main.dart';
 import '../../../core/database/app_database.dart' as db;
@@ -18,19 +19,32 @@ class SelectedPlaylistNotifier extends Notifier<int?> {
   }
 }
 
-final selectedPlaylistIdProvider = NotifierProvider<SelectedPlaylistNotifier, int?>(SelectedPlaylistNotifier.new);
+final selectedPlaylistIdProvider =
+    NotifierProvider<SelectedPlaylistNotifier, int?>(
+      SelectedPlaylistNotifier.new,
+    );
 
 // 3. Streams the specific tracks for the selected playlist, in the manual
 // order the user dragged them into.
-final playlistTracksProvider =
-    StreamProvider.family<List<db.Track>, int>((ref, playlistId) {
-  return ref.watch(databaseProvider).watchPlaylistTracks(playlistId);
+final playlistTracksProvider = StreamProvider.family<List<db.Track>, int>((
+  ref,
+  playlistId,
+) {
+  final playlists = ref.watch(playlistsProvider).value ?? [];
+  final matching = playlists.where((p) => p.id == playlistId);
+  final rules = matching.isEmpty ? null : matching.first.rulesJson;
+  final database = ref.watch(databaseProvider);
+  return rules == null
+      ? database.watchPlaylistTracks(playlistId)
+      : database.watchRules(SmartRules.decode(rules));
 });
 
 // 4. Membership ids for a playlist, so the track picker can grey out songs the
 // playlist already holds without loading every joined track row.
-final playlistTrackIdsProvider =
-    StreamProvider.family<Set<int>, int>((ref, playlistId) {
+final playlistTrackIdsProvider = StreamProvider.family<Set<int>, int>((
+  ref,
+  playlistId,
+) {
   return ref.watch(databaseProvider).watchPlaylistTrackIds(playlistId);
 });
 
@@ -45,7 +59,7 @@ typedef TrackPickerQuery = ({String search, db.LibrarySort sort});
 // picker must not scroll the screen behind it.
 final trackPickerLibraryProvider = StreamProvider.autoDispose
     .family<List<db.Track>, TrackPickerQuery>((ref, query) {
-  return ref
-      .watch(databaseProvider)
-      .watchLibrary(search: query.search, sort: query.sort);
-});
+      return ref
+          .watch(databaseProvider)
+          .watchLibrary(search: query.search, sort: query.sort);
+    });

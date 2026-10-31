@@ -7,8 +7,10 @@ import '../../../shared/theme/app_theme.dart';
 import '../../playlists/providers/playlists_provider.dart';
 
 class AddToPlaylistDialog extends ConsumerStatefulWidget {
-  final db.Track track;
-  const AddToPlaylistDialog({super.key, required this.track});
+  final db.Track? track;
+  final List<db.Track> tracks;
+  List<db.Track> get allTracks => track == null ? tracks : [track!];
+  const AddToPlaylistDialog({super.key, this.track, this.tracks = const []});
 
   @override
   ConsumerState<AddToPlaylistDialog> createState() =>
@@ -33,7 +35,8 @@ class _AddToPlaylistDialogState extends ConsumerState<AddToPlaylistDialog> {
     return AlertDialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('Add "${widget.track.title}" to...',
+      title: Text(
+        'Add ${widget.allTracks.length} tracks to playlist',
         style: TextStyle(color: colors.textPrimary, fontSize: 18),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -53,38 +56,51 @@ class _AddToPlaylistDialogState extends ConsumerState<AddToPlaylistDialog> {
                       hintText: 'New Playlist Name',
                       hintStyle: TextStyle(color: colors.textFaint),
                       enabledBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: colors.border)),
+                        borderSide: BorderSide(color: colors.border),
+                      ),
                       focusedBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: colors.accent)),
+                        borderSide: BorderSide(color: colors.accent),
+                      ),
                     ),
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Create playlist and add tracks',
                   icon: Icon(Icons.add_circle, color: colors.accent),
                   onPressed: () async {
                     if (_controller.text.trim().isNotEmpty) {
                       final newPlaylistId = await database
                           .into(database.playlists)
-                          .insert(db.PlaylistsCompanion.insert(
-                              name: _controller.text.trim()));
-                      await database.addTrackToPlaylist(
-                          newPlaylistId, widget.track.id);
+                          .insert(
+                            db.PlaylistsCompanion.insert(
+                              name: _controller.text.trim(),
+                            ),
+                          );
+                      await database.addTracksToPlaylist(
+                        newPlaylistId,
+                        widget.allTracks.map((t) => t.id).toList(),
+                      );
                       if (context.mounted) Navigator.pop(context);
                     }
                   },
-                )
+                ),
               ],
             ),
             const SizedBox(height: 16),
             Divider(color: colors.border),
 
             playlistsAsync.when(
-              data: (playlists) {
+              data: (allPlaylists) {
+                final playlists = allPlaylists
+                    .where((p) => p.rulesJson == null)
+                    .toList();
                 if (playlists.isEmpty) {
                   return Padding(
                     padding: const EdgeInsets.all(16.0),
-                    child: Text('No custom playlists yet.',
-                        style: TextStyle(color: colors.textFaint)),
+                    child: Text(
+                      'No custom playlists yet.',
+                      style: TextStyle(color: colors.textFaint),
+                    ),
                   );
                 }
                 return ConstrainedBox(
@@ -96,13 +112,20 @@ class _AddToPlaylistDialogState extends ConsumerState<AddToPlaylistDialog> {
                       final playlist = playlists[index];
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(playlist.name,
-                            style: TextStyle(color: colors.textSecondary)),
-                        trailing:
-                            Icon(Icons.add, color: colors.textFaint, size: 20),
+                        title: Text(
+                          playlist.name,
+                          style: TextStyle(color: colors.textSecondary),
+                        ),
+                        trailing: Icon(
+                          Icons.add,
+                          color: colors.textFaint,
+                          size: 20,
+                        ),
                         onTap: () async {
-                          await database.addTrackToPlaylist(
-                              playlist.id, widget.track.id);
+                          await database.addTracksToPlaylist(
+                            playlist.id,
+                            widget.allTracks.map((t) => t.id).toList(),
+                          );
                           if (context.mounted) Navigator.pop(context);
                         },
                       );
@@ -111,8 +134,10 @@ class _AddToPlaylistDialogState extends ConsumerState<AddToPlaylistDialog> {
                 );
               },
               loading: () => CircularProgressIndicator(color: colors.accent),
-              error: (e, st) => const Text('Failed to load playlists.',
-                  style: TextStyle(color: Colors.red)),
+              error: (e, st) => const Text(
+                'Failed to load playlists.',
+                style: TextStyle(color: Colors.red),
+              ),
             ),
           ],
         ),

@@ -39,7 +39,8 @@ class SongStatsDialog extends ConsumerWidget {
 
     // Live, so the numbers move while the song is playing.
     var stat = initial;
-    for (final row in ref.watch(songStatsProvider).value ?? const <SongStat>[]) {
+    for (final row
+        in ref.watch(songStatsProvider).value ?? const <SongStat>[]) {
       if (row.track.id == trackId) {
         stat = row;
         break;
@@ -49,13 +50,17 @@ class SongStatsDialog extends ConsumerWidget {
 
     final playTimes =
         ref.watch(trackPlayTimesProvider(trackId)).value ?? const <DateTime>[];
-    final sessions = ref.watch(trackListeningSessionsProvider(trackId)).value ??
+    final sessions =
+        ref.watch(trackListeningSessionsProvider(trackId)).value ??
         const <ListeningSessionEntry>[];
 
-    final lifetimeListened =
-        sessions.fold<int>(0, (sum, s) => sum + s.listenedMs);
-    final lifetimeSkips =
-        sessions.where((s) => s.listenedMs * 4 < track.durationMs).length;
+    final lifetimeListened = sessions.fold<int>(
+      0,
+      (sum, s) => sum + s.listenedMs,
+    );
+    final lifetimeSkips = sessions
+        .where((s) => s.listenedMs * 4 < track.durationMs)
+        .length;
 
     return Dialog(
       backgroundColor: colors.surface,
@@ -75,8 +80,11 @@ class SongStatsDialog extends ConsumerWidget {
                 _tiles([
                   _Tile('Plays', '${stat.plays}'),
                   _Tile('Time listened', formatListened(stat.listenedMs)),
-                  _Tile('Skips', '${stat.skips}',
-                      hint: _skipHint(stat.skips, stat.starts)),
+                  _Tile(
+                    'Skips',
+                    '${stat.skips}',
+                    hint: _skipHint(stat.skips, stat.starts),
+                  ),
                   _Tile('Last played', _date(stat.lastPlayed)),
                 ]),
               ],
@@ -85,8 +93,11 @@ class SongStatsDialog extends ConsumerWidget {
               _tiles([
                 _Tile('Plays', '${playTimes.length}'),
                 _Tile('Time listened', formatListened(lifetimeListened)),
-                _Tile('Skips', '$lifetimeSkips',
-                    hint: _skipHint(lifetimeSkips, sessions.length)),
+                _Tile(
+                  'Skips',
+                  '$lifetimeSkips',
+                  hint: _skipHint(lifetimeSkips, sessions.length),
+                ),
                 _Tile(
                   'Avg. per start',
                   sessions.isEmpty
@@ -96,10 +107,14 @@ class SongStatsDialog extends ConsumerWidget {
                       ? '${(100 * lifetimeListened / sessions.length / track.durationMs).round()}% of the song'
                       : null,
                 ),
-                _Tile('First played',
-                    _date(playTimes.isEmpty ? null : playTimes.first)),
-                _Tile('Last played',
-                    _date(playTimes.isEmpty ? null : playTimes.last)),
+                _Tile(
+                  'First played',
+                  _date(playTimes.isEmpty ? null : playTimes.first),
+                ),
+                _Tile(
+                  'Last played',
+                  _date(playTimes.isEmpty ? null : playTimes.last),
+                ),
                 _Tile('Added', _date(track.dateAdded)),
                 _Tile('Length', formatListened(track.durationMs)),
               ]),
@@ -114,8 +129,10 @@ class SongStatsDialog extends ConsumerWidget {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: Text('Close',
-                        style: TextStyle(color: colors.textFaint)),
+                    child: Text(
+                      'Close',
+                      style: TextStyle(color: colors.textFaint),
+                    ),
                   ),
                   if (onPlay != null) ...[
                     const SizedBox(width: 8),
@@ -212,18 +229,20 @@ class SongStatsDialog extends ConsumerWidget {
   }
 
   Widget _tiles(List<_Tile> tiles) {
-    return LayoutBuilder(builder: (context, constraints) {
-      const spacing = 8.0;
-      const perRow = 4;
-      final width = (constraints.maxWidth - spacing * (perRow - 1)) / perRow;
-      return Wrap(
-        spacing: spacing,
-        runSpacing: spacing,
-        children: [
-          for (final tile in tiles) SizedBox(width: width, child: tile),
-        ],
-      );
-    });
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 8.0;
+        const perRow = 4;
+        final width = (constraints.maxWidth - spacing * (perRow - 1)) / perRow;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final tile in tiles) SizedBox(width: width, child: tile),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -248,10 +267,12 @@ class _Tile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textFaint, fontSize: 11)),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.textFaint, fontSize: 11),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
@@ -264,10 +285,12 @@ class _Tile extends StatelessWidget {
             ),
           ),
           // Always laid out, so tiles with and without a hint line up.
-          Text(hint ?? '',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.textFaint, fontSize: 10)),
+          Text(
+            hint ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.textFaint, fontSize: 10),
+          ),
         ],
       ),
     );
@@ -308,11 +331,14 @@ class _MonthlyPlaysChart extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Plays per month',
-            style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600)),
+        Text(
+          'Plays per month',
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         Text(
           '${DateFormat('MMM yyyy').format(months.first)} – '
           '${DateFormat('MMM yyyy').format(months.last)}',
@@ -323,8 +349,10 @@ class _MonthlyPlaysChart extends StatelessWidget {
           SizedBox(
             height: _plotHeight + 41,
             child: Center(
-              child: Text('No plays in these months.',
-                  style: TextStyle(color: colors.textFaint, fontSize: 12)),
+              child: Text(
+                'No plays in these months.',
+                style: TextStyle(color: colors.textFaint, fontSize: 12),
+              ),
             ),
           )
         else
@@ -334,7 +362,8 @@ class _MonthlyPlaysChart extends StatelessWidget {
               for (var i = 0; i < 12; i++)
                 Expanded(
                   child: Tooltip(
-                    message: '${longMonth.format(months[i])}: '
+                    message:
+                        '${longMonth.format(months[i])}: '
                         '${counts[i]} ${counts[i] == 1 ? 'play' : 'plays'}',
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -347,10 +376,13 @@ class _MonthlyPlaysChart extends StatelessWidget {
                               if (i == peakIndex)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 2),
-                                  child: Text('${counts[i]}',
-                                      style: TextStyle(
-                                          color: colors.textSecondary,
-                                          fontSize: 11)),
+                                  child: Text(
+                                    '${counts[i]}',
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
                                 ),
                               Center(
                                 child: Container(
@@ -359,7 +391,8 @@ class _MonthlyPlaysChart extends StatelessWidget {
                                   decoration: BoxDecoration(
                                     color: colors.accent,
                                     borderRadius: const BorderRadius.vertical(
-                                        top: Radius.circular(4)),
+                                      top: Radius.circular(4),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -368,9 +401,13 @@ class _MonthlyPlaysChart extends StatelessWidget {
                         ),
                         Container(height: 1, color: colors.border),
                         const SizedBox(height: 4),
-                        Text(shortMonth.format(months[i]),
-                            style: TextStyle(
-                                color: colors.textFaint, fontSize: 10)),
+                        Text(
+                          shortMonth.format(months[i]),
+                          style: TextStyle(
+                            color: colors.textFaint,
+                            fontSize: 10,
+                          ),
+                        ),
                       ],
                     ),
                   ),

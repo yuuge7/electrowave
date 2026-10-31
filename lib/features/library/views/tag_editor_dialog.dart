@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,25 +19,40 @@ class TagEditorDialog extends ConsumerStatefulWidget {
 }
 
 class _TagEditorDialogState extends ConsumerState<TagEditorDialog> {
-  late final TextEditingController _title =
-      TextEditingController(text: widget.track.title);
-  late final TextEditingController _artist =
-      TextEditingController(text: widget.track.artist);
-  late final TextEditingController _album =
-      TextEditingController(text: widget.track.album);
-  late final TextEditingController _genre =
-      TextEditingController(text: widget.track.genre ?? '');
-  late final TextEditingController _trackNumber =
-      TextEditingController(text: widget.track.trackNumber?.toString() ?? '');
-  late final TextEditingController _discNumber =
-      TextEditingController(text: widget.track.discNumber?.toString() ?? '');
-  late final TextEditingController _year =
-      TextEditingController(text: widget.track.year?.toString() ?? '');
+  late final TextEditingController _title = TextEditingController(
+    text: widget.track.title,
+  );
+  late final TextEditingController _artist = TextEditingController(
+    text: widget.track.artist,
+  );
+  late final TextEditingController _album = TextEditingController(
+    text: widget.track.album,
+  );
+  late final TextEditingController _genre = TextEditingController(
+    text: widget.track.genre ?? '',
+  );
+  late final TextEditingController _trackNumber = TextEditingController(
+    text: widget.track.trackNumber?.toString() ?? '',
+  );
+  late final TextEditingController _discNumber = TextEditingController(
+    text: widget.track.discNumber?.toString() ?? '',
+  );
+  late final TextEditingController _year = TextEditingController(
+    text: widget.track.year?.toString() ?? '',
+  );
 
+  final _albumArtist = TextEditingController();
+  String? _cover;
   bool _saving = false;
+  @override
+  void initState() {
+    super.initState();
+    _albumArtist.text = widget.track.albumArtist ?? '';
+  }
 
   @override
   void dispose() {
+    _albumArtist.dispose();
     _title.dispose();
     _artist.dispose();
     _album.dispose();
@@ -59,8 +75,9 @@ class _TagEditorDialogState extends ConsumerState<TagEditorDialog> {
         controller: controller,
         style: TextStyle(color: colors.textPrimary),
         keyboardType: numeric ? TextInputType.number : TextInputType.text,
-        inputFormatters:
-            numeric ? [FilteringTextInputFormatter.digitsOnly] : null,
+        inputFormatters: numeric
+            ? [FilteringTextInputFormatter.digitsOnly]
+            : null,
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(color: colors.textFaint),
@@ -87,14 +104,19 @@ class _TagEditorDialogState extends ConsumerState<TagEditorDialog> {
     }
 
     final edit = TagEdit(
+      albumArtist: _albumArtist.text.trim() == (widget.track.albumArtist ?? '')
+          ? null
+          : _albumArtist.text.trim(),
+      coverImagePath: _cover,
       title: _title.text.trim().isEmpty
           ? widget.track.title
           : _title.text.trim(),
       artist: _artist.text.trim().isEmpty
           ? widget.track.artist
           : _artist.text.trim(),
-      album:
-          _album.text.trim().isEmpty ? widget.track.album : _album.text.trim(),
+      album: _album.text.trim().isEmpty
+          ? widget.track.album
+          : _album.text.trim(),
       genre: _genre.text.trim(),
       trackNumber: parsed(_trackNumber),
       discNumber: parsed(_discNumber),
@@ -129,14 +151,34 @@ class _TagEditorDialogState extends ConsumerState<TagEditorDialog> {
               _field('Title', _title),
               _field('Artist', _artist),
               _field('Album', _album),
+              _field('Album artist', _albumArtist),
+              OutlinedButton.icon(
+                onPressed: _saving
+                    ? null
+                    : () async {
+                        final result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['jpg', 'jpeg', 'png'],
+                        );
+                        if (result != null && mounted) {
+                          setState(() => _cover = result.files.single.path);
+                        }
+                      },
+                icon: const Icon(Icons.image),
+                label: Text(
+                  _cover == null ? 'Choose cover art' : 'Cover selected',
+                ),
+              ),
               _field('Genre', _genre),
               Row(
                 children: [
                   Expanded(
-                      child: _field('Track no.', _trackNumber, numeric: true)),
+                    child: _field('Track no.', _trackNumber, numeric: true),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
-                      child: _field('Disc no.', _discNumber, numeric: true)),
+                    child: _field('Disc no.', _discNumber, numeric: true),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(child: _field('Year', _year, numeric: true)),
                 ],
@@ -157,11 +199,17 @@ class _TagEditorDialogState extends ConsumerState<TagEditorDialog> {
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: colors.accent),
+                    strokeWidth: 2,
+                    color: colors.accent,
+                  ),
                 )
-              : Text('Save',
+              : Text(
+                  'Save',
                   style: TextStyle(
-                      color: colors.accent, fontWeight: FontWeight.bold)),
+                    color: colors.accent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
         ),
       ],
     );

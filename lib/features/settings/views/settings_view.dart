@@ -12,6 +12,7 @@ import '../services/backup_service.dart';
 import '../services/settings_persistence.dart';
 import 'equalizer_dialog.dart';
 import 'removed_tracks_dialog.dart';
+import 'desktop_settings.dart';
 
 class SettingsView extends ConsumerWidget {
   const SettingsView({super.key});
@@ -21,10 +22,12 @@ class SettingsView extends ConsumerWidget {
     if (context.mounted && success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Backup exported successfully!',
-              style: TextStyle(color: context.colors.onAccent)),
+          content: Text(
+            'Backup exported successfully!',
+            style: TextStyle(color: context.colors.onAccent),
+          ),
           backgroundColor: context.colors.accent,
-        )
+        ),
       );
     }
   }
@@ -34,7 +37,7 @@ class SettingsView extends ConsumerWidget {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Select Library Backup',
       type: FileType.custom,
-      allowedExtensions: ['sqlite', 'db'],
+      allowedExtensions: ['ewbackup', 'sqlite', 'db'],
     );
 
     if (result == null || result.files.single.path == null) return;
@@ -49,7 +52,9 @@ class SettingsView extends ConsumerWidget {
     );
 
     // STAGE the file instead of trying to overwrite the locked database
-    final success = await ref.read(backupServiceProvider).stageImport(backupPath);
+    final success = await ref
+        .read(backupServiceProvider)
+        .stageImport(backupPath);
 
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
@@ -63,18 +68,30 @@ class SettingsView extends ConsumerWidget {
           backgroundColor: colors.surface,
           title: Text('Import Ready', style: TextStyle(color: colors.accent)),
           content: Text(
-            'Backup file has been staged successfully!\n\nBecause Windows locks active databases, the app must be restarted to apply the new library.',
+            'Your backup is ready. Close and reopen Electrowave to apply it. A recovery backup of your current library will be kept.',
             style: TextStyle(color: colors.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => exit(0),
-              child: Text('Close App Now',
-                  style: TextStyle(
-                      color: colors.accent, fontWeight: FontWeight.bold)),
+              child: Text(
+                'Close App Now',
+                style: TextStyle(
+                  color: colors.accent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
-        )
+        ),
+      );
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Backup was not imported. ${ref.read(backupServiceProvider).lastError ?? "Choose a valid Electrowave backup and try again."}',
+          ),
+        ),
       );
     }
   }
@@ -88,36 +105,47 @@ class SettingsView extends ConsumerWidget {
     if (selectedDirectory != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Scanning new folder and repairing links...',
-                style: TextStyle(color: colors.onAccent)),
-            backgroundColor: colors.accent),
+          content: Text(
+            'Scanning new folder and repairing links...',
+            style: TextStyle(color: colors.onAccent),
+          ),
+          backgroundColor: colors.accent,
+        ),
       );
 
       final database = ref.read(databaseProvider);
-      final count = await ref.read(backupServiceProvider).relocateLibrary(selectedDirectory, database);
+      final count = await ref
+          .read(backupServiceProvider)
+          .relocateLibrary(selectedDirectory, database);
 
       if (context.mounted) {
-         showDialog(
-           context: context,
-           barrierDismissible: false,
-           builder: (context) => AlertDialog(
-             backgroundColor: colors.surface,
-             title: Text('Migration Complete',
-                 style: TextStyle(color: colors.accent)),
-             content: Text(
-               'Successfully repaired $count file paths!\n\nThe app will now restart to apply changes.',
-               style: TextStyle(color: colors.textSecondary),
-             ),
-             actions: [
-               TextButton(
-                 onPressed: () => exit(0),
-                 child: Text('Restart Now',
-                     style: TextStyle(
-                         color: colors.accent, fontWeight: FontWeight.bold)),
-               ),
-             ]
-           )
-         );
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: colors.surface,
+            title: Text(
+              'Migration Complete',
+              style: TextStyle(color: colors.accent),
+            ),
+            content: Text(
+              'Repaired $count paths. Ambiguous matches were left unchanged. Rescan your library folders if any files are still missing.',
+              style: TextStyle(color: colors.textSecondary),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Done',
+                  style: TextStyle(
+                    color: colors.accent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
       }
     }
   }
@@ -128,7 +156,10 @@ class SettingsView extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text('Clear Library', style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          'Clear Library',
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           'Wipe entire database? Files remain safe.',
           style: TextStyle(color: colors.textSecondary),
@@ -156,10 +187,13 @@ class SettingsView extends ConsumerWidget {
               ref.invalidate(wrappedStatsProvider);
               if (context.mounted) Navigator.pop(context);
             },
-            child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: Colors.redAccent),
+            ),
           ),
         ],
-      )
+      ),
     );
   }
 
@@ -169,8 +203,10 @@ class SettingsView extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text('Clear Play History',
-            style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          'Clear Play History',
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           'Deletes play counts, last-played dates and measured listening time. '
           'Your tracks and playlists stay exactly as they are.',
@@ -187,7 +223,10 @@ class SettingsView extends ConsumerWidget {
               ref.invalidate(wrappedStatsProvider);
               if (context.mounted) Navigator.pop(context);
             },
-            child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: Colors.redAccent),
+            ),
           ),
         ],
       ),
@@ -195,28 +234,35 @@ class SettingsView extends ConsumerWidget {
   }
 
   Widget _sectionTitle(BuildContext context, String text) {
-    return Text(text,
-        style: TextStyle(
-            color: context.colors.accent, fontWeight: FontWeight.bold));
+    return Text(
+      text,
+      style: TextStyle(
+        color: context.colors.accent,
+        fontWeight: FontWeight.bold,
+      ),
+    );
   }
 
   Widget _card(BuildContext context, {required Widget child}) {
     final colors = context.colors;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      decoration: BoxDecoration(
-        color: colors.surface,
+    return Material(
+      color: colors.surface,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.border),
+        side: BorderSide(color: colors.border),
       ),
-      child: child,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: child,
+      ),
     );
   }
 
   Widget _appearanceSection(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final mode = ref.watch(
-        settingsControllerProvider.select((settings) => settings.themeMode));
+      settingsControllerProvider.select((settings) => settings.themeMode),
+    );
 
     return _card(
       context,
@@ -225,23 +271,28 @@ class SettingsView extends ConsumerWidget {
         children: [
           Text('Theme', style: TextStyle(color: colors.textPrimary)),
           const SizedBox(height: 4),
-          Text('Follow the system, or pin light or dark.',
-              style: TextStyle(color: colors.textFaint, fontSize: 12)),
+          Text(
+            'Follow the system, or pin light or dark.',
+            style: TextStyle(color: colors.textFaint, fontSize: 12),
+          ),
           const SizedBox(height: 12),
           SegmentedButton<AppThemeMode>(
             segments: const [
               ButtonSegment(
-                  value: AppThemeMode.system,
-                  icon: Icon(Icons.brightness_auto),
-                  label: Text('System')),
+                value: AppThemeMode.system,
+                icon: Icon(Icons.brightness_auto),
+                label: Text('System'),
+              ),
               ButtonSegment(
-                  value: AppThemeMode.light,
-                  icon: Icon(Icons.light_mode),
-                  label: Text('Light')),
+                value: AppThemeMode.light,
+                icon: Icon(Icons.light_mode),
+                label: Text('Light'),
+              ),
               ButtonSegment(
-                  value: AppThemeMode.dark,
-                  icon: Icon(Icons.dark_mode),
-                  label: Text('Dark')),
+                value: AppThemeMode.dark,
+                icon: Icon(Icons.dark_mode),
+                label: Text('Dark'),
+              ),
             ],
             selected: {mode},
             showSelectedIcon: false,
@@ -266,16 +317,24 @@ class SettingsView extends ConsumerWidget {
         children: [
           Row(
             children: [
-              Text('Playback speed',
-                  style: TextStyle(color: colors.textPrimary)),
+              Text(
+                'Playback speed',
+                style: TextStyle(color: colors.textPrimary),
+              ),
               const Spacer(),
-              Text('${settings.playbackRate.toStringAsFixed(2)}×',
-                  style: TextStyle(
-                      color: colors.accent, fontWeight: FontWeight.bold)),
+              Text(
+                '${settings.playbackRate.toStringAsFixed(2)}×',
+                style: TextStyle(
+                  color: colors.accent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
-          Text('Pitch-preserving, and re-applied to every track.',
-              style: TextStyle(color: colors.textFaint, fontSize: 12)),
+          Text(
+            'Pitch-preserving, and re-applied to every track.',
+            style: TextStyle(color: colors.textFaint, fontSize: 12),
+          ),
           Slider(
             value: settings.playbackRate.clamp(0.5, 2.0),
             min: 0.5,
@@ -290,8 +349,10 @@ class SettingsView extends ConsumerWidget {
             children: [
               TextButton(
                 onPressed: () => controller.setPlaybackRate(1.0),
-                child: Text('Reset to 1.00×',
-                    style: TextStyle(color: colors.textFaint)),
+                child: Text(
+                  'Reset to 1.00×',
+                  style: TextStyle(color: colors.textFaint),
+                ),
               ),
             ],
           ),
@@ -301,9 +362,12 @@ class SettingsView extends ConsumerWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.graphic_eq, color: colors.accent),
-            title: Text('Equalizer', style: TextStyle(color: colors.textPrimary)),
+            title: Text(
+              'Equalizer',
+              style: TextStyle(color: colors.textPrimary),
+            ),
             subtitle: Text(
-              settings.eqEnabled ? '5-band EQ is on' : '5-band EQ is off',
+              settings.eqEnabled ? '10-band EQ is on' : '10-band EQ is off',
               style: TextStyle(color: colors.textFaint, fontSize: 12),
             ),
             trailing: Icon(Icons.chevron_right, color: colors.textFaint),
@@ -319,10 +383,14 @@ class SettingsView extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Volume normalization',
-                        style: TextStyle(color: colors.textPrimary)),
-                    Text('Uses the ReplayGain tags in your files.',
-                        style: TextStyle(color: colors.textFaint, fontSize: 12)),
+                    Text(
+                      'Volume normalization',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    Text(
+                      'Uses the ReplayGain tags in your files.',
+                      style: TextStyle(color: colors.textFaint, fontSize: 12),
+                    ),
                   ],
                 ),
               ),
@@ -333,11 +401,17 @@ class SettingsView extends ConsumerWidget {
                 style: TextStyle(color: colors.textPrimary),
                 items: const [
                   DropdownMenuItem(
-                      value: ReplayGainMode.off, child: Text('Off')),
+                    value: ReplayGainMode.off,
+                    child: Text('Off'),
+                  ),
                   DropdownMenuItem(
-                      value: ReplayGainMode.track, child: Text('Per track')),
+                    value: ReplayGainMode.track,
+                    child: Text('Per track'),
+                  ),
                   DropdownMenuItem(
-                      value: ReplayGainMode.album, child: Text('Per album')),
+                    value: ReplayGainMode.album,
+                    child: Text('Per album'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) controller.setReplayGain(value);
@@ -353,8 +427,10 @@ class SettingsView extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Stop when unattended',
-                        style: TextStyle(color: colors.textPrimary)),
+                    Text(
+                      'Stop when unattended',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
                     Text(
                       'Stops playback after this long with no interaction at '
                       'all. Any click or media key resets it.',
@@ -364,8 +440,10 @@ class SettingsView extends ConsumerWidget {
                 ),
               ),
               DropdownButton<int>(
-                value: kInactivityStopChoicesMinutes
-                        .contains(settings.inactivityStopMinutes)
+                value:
+                    kInactivityStopChoicesMinutes.contains(
+                      settings.inactivityStopMinutes,
+                    )
                     ? settings.inactivityStopMinutes
                     : 0,
                 dropdownColor: colors.surfaceAlt,
@@ -403,9 +481,13 @@ class SettingsView extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Settings',
-            style: TextStyle(
-                color: colors.textPrimary, fontWeight: FontWeight.bold)),
+        title: Text(
+          'Settings',
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16.0),
@@ -424,15 +506,18 @@ class SettingsView extends ConsumerWidget {
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: colors.textSecondary,
             textColor: colors.textPrimary,
             leading: const Icon(Icons.restore_from_trash),
             title: const Text('Removed tracks'),
             subtitle: Text(
-                'Restore soft-deleted tracks, or delete them for good.',
-                style: TextStyle(color: colors.textFaint)),
+              'Restore soft-deleted tracks, or delete them for good.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => showDialog(
               context: context,
               builder: (context) => const RemovedTracksDialog(),
@@ -441,15 +526,18 @@ class SettingsView extends ConsumerWidget {
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: Colors.orangeAccent,
             textColor: Colors.orangeAccent,
             leading: const Icon(Icons.history_toggle_off),
             title: const Text('Clear Play History'),
             subtitle: Text(
-                'Resets play counts, stats and measured listening time.',
-                style: TextStyle(color: colors.textFaint)),
+              'Resets play counts, stats and measured listening time.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => _confirmClearHistory(context, ref),
           ),
 
@@ -458,73 +546,93 @@ class SettingsView extends ConsumerWidget {
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: Colors.blueAccent,
             textColor: Colors.blueAccent,
             leading: const Icon(Icons.download),
             title: const Text('Export Backup'),
-            subtitle: Text('Save a copy of your library, playlists, and history.',
-                style: TextStyle(color: colors.textFaint)),
+            subtitle: Text(
+              'Save library, settings, cover art and session in one file.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => _handleExport(context, ref),
           ),
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: Colors.orangeAccent,
             textColor: Colors.orangeAccent,
             leading: const Icon(Icons.upload),
             title: const Text('Import Backup'),
-            subtitle: Text('Restore your library from a previous backup file.',
-                style: TextStyle(color: colors.textFaint)),
+            subtitle: Text(
+              'Restore your library from a previous backup file.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => _handleImport(context, ref),
           ),
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: Colors.purpleAccent,
             textColor: Colors.purpleAccent,
             leading: const Icon(Icons.sync_alt),
             title: const Text('Repair Broken Links'),
-            subtitle: Text('Use this if you moved your music to a new folder or OS.',
-                style: TextStyle(color: colors.textFaint)),
+            subtitle: Text(
+              'Use this if you moved your music to a new folder or OS.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => _startRelocationFlow(context, ref),
           ),
           const SizedBox(height: 8),
 
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             iconColor: Colors.redAccent,
             textColor: Colors.redAccent,
             leading: const Icon(Icons.delete_forever),
             title: const Text('Clear Entire Library'),
-            subtitle: Text('Wipes the database so you can scan a fresh folder.',
-                style: TextStyle(color: colors.textFaint)),
+            subtitle: Text(
+              'Wipes the database so you can scan a fresh folder.',
+              style: TextStyle(color: colors.textFaint),
+            ),
             onTap: () => _confirmClearLibrary(context, ref),
           ),
 
           const SizedBox(height: 32),
 
+          const DesktopSettings(),
+          const SizedBox(height: 32),
           _sectionTitle(context, 'About'),
           const SizedBox(height: 8),
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             tileColor: colors.surface,
             leading: Icon(Icons.info_outline, color: colors.textPrimary),
-            title: Text('Electrowave', style: TextStyle(color: colors.textPrimary)),
-            subtitle: Text(
-              switch (ref.watch(appVersionProvider)) {
-                AsyncData(:final value) => 'Version $value',
-                AsyncError() => 'Version unknown',
-                _ => 'Version…',
-              },
-              style: TextStyle(color: colors.textFaint),
+            title: Text(
+              'Electrowave',
+              style: TextStyle(color: colors.textPrimary),
             ),
+            subtitle: Text(switch (ref.watch(appVersionProvider)) {
+              AsyncData(:final value) => 'Version $value',
+              AsyncError() => 'Version unknown',
+              _ => 'Version…',
+            }, style: TextStyle(color: colors.textFaint)),
           ),
         ],
       ),

@@ -40,6 +40,11 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
       - name: Build Linux Release
         run: flutter build linux --release
 
@@ -59,22 +64,22 @@ jobs:
           # Icon + .desktop must be named after APPLICATION_ID from
           # linux/CMakeLists.txt so desktop environments can map the running
           # window (app_id/WM_CLASS) to them — else taskbar icon is generic.
-          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/com.example.electrowave.png
+          cp web/music.png deb_pkg/usr/share/icons/hicolor/512x512/apps/io.github.yuuge7.electrowave.png
 
           ln -s /opt/electrowave/electrowave deb_pkg/usr/bin/electrowave
 
-          cat <<EOF > deb_pkg/usr/share/applications/com.example.electrowave.desktop
+          cat <<EOF > deb_pkg/usr/share/applications/io.github.yuuge7.electrowave.desktop
           [Desktop Entry]
           Version=1.0
           Name=Electrowave
           GenericName=Media Player
           Comment=Play local music files
           Exec=/opt/electrowave/electrowave
-          Icon=com.example.electrowave
+          Icon=io.github.yuuge7.electrowave
           Terminal=false
           Type=Application
           Categories=AudioVideo;Audio;Player;
-          StartupWMClass=com.example.electrowave
+          StartupWMClass=io.github.yuuge7.electrowave
           EOF
           
           cat <<EOF > deb_pkg/DEBIAN/control
@@ -181,8 +186,17 @@ jobs:
       - name: Enable Windows Desktop
         run: flutter config --enable-windows-desktop
 
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
       - name: Build Windows Release
         run: flutter build windows --release
+
+      - name: Build Windows Installer
+        shell: pwsh
+        run: ./packaging/windows/build-installer.ps1
 
       - name: Zip Windows Release
         run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath electrowave-windows-x64.zip
@@ -191,7 +205,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: electrowave-windows-release-files
-          path: electrowave-windows-x64.zip
+          path: |
+            electrowave-windows-x64.zip
+            build/installer/electrowave-setup.msi
 
   # --- CREATE OFFICIAL GITHUB RELEASE ---
   publish-release:

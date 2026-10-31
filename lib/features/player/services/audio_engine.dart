@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -139,7 +140,9 @@ class AudioEngine {
       // Exactly one stretcher in the chain: with correction left on, mpv
       // inserts its own on top of ours and the two fight over the speed.
       await native.setProperty(
-          'audio-pitch-correction', wantsStretcher ? 'no' : 'yes');
+        'audio-pitch-correction',
+        wantsStretcher ? 'no' : 'yes',
+      );
       await native.setProperty('af', chain);
 
       final applied = await native.getProperty('af');
@@ -164,7 +167,8 @@ class AudioEngine {
   }
 
   Iterable<String> _filterNames(String chain) sync* {
-    if (chain.contains('lavfi')) yield 'equalizer';
+    if (chain.contains('equalizer')) yield 'equalizer';
+    if (chain.contains('volume=')) yield 'volume';
     final stretch = _stretchFilter;
     if (stretch != null && chain.contains(stretch.split('=').first)) {
       yield stretch.split('=').first;
@@ -205,6 +209,12 @@ class AudioEngine {
 
     await _applyFilterChain();
     try {
+      await native.setProperty('audio-device', settings.audioDevice);
+      await native.setProperty(
+        'audio-exclusive',
+        settings.exclusiveMode ? 'yes' : 'no',
+      );
+      await native.setProperty('replaygain-clip', 'no');
       await native.setProperty('replaygain', switch (settings.replayGain) {
         ReplayGainMode.off => 'no',
         ReplayGainMode.track => 'track',
@@ -212,6 +222,16 @@ class AudioEngine {
       });
     } catch (_) {
       // An unsupported property must not take playback down.
+    }
+  }
+
+  Future<void> setTrackGain(double? gain) async {
+    final native = _native;
+    if (native == null) return;
+    try {
+      await native.setProperty('replaygain-fallback', '${gain ?? 0}');
+    } catch (e) {
+      debugPrint('ReplayGain fallback unavailable: $e');
     }
   }
 
@@ -267,12 +287,17 @@ String buildFilterChain({
 
   if (settings != null && settings.eqEnabled) {
     final bands = <String>[];
+    final peak = settings.eqGainsDb.fold<double>(0, max);
+    final preamp = settings.eqPreampDb - peak;
+    if (preamp < -0.01) bands.add('volume=${preamp.toStringAsFixed(1)}dB');
     for (var i = 0; i < kEqBandFrequencies.length; i++) {
       final gain = i < settings.eqGainsDb.length ? settings.eqGainsDb[i] : 0.0;
       // Skip inaudible bands to keep the graph short.
       if (gain.abs() < 0.1) continue;
-      bands.add('equalizer=f=${kEqBandFrequencies[i]}:t=o:w=2'
-          ':g=${gain.toStringAsFixed(1)}');
+      bands.add(
+        'equalizer=f=${kEqBandFrequencies[i]}:t=o:w=2'
+        ':g=${gain.toStringAsFixed(1)}',
+      );
     }
     if (bands.isNotEmpty) parts.add('lavfi=[${bands.join(',')}]');
   }

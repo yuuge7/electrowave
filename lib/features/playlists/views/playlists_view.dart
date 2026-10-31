@@ -1,3 +1,10 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:drift/drift.dart' as drift;
+import '../../library/services/file_exchange.dart';
+import '../../library/views/track_table.dart';
+import '../../library/views/track_actions.dart';
+import '../../../shared/widgets/retry_message.dart';
+import 'playlist_details_dialog.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -11,6 +18,16 @@ import '../../player/providers/queue_provider.dart';
 import '../../../main.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../../core/database/app_database.dart' as db;
+
+class _SelectionMode extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void toggle() => state = !state;
+}
+
+final _selectionModeProvider = NotifierProvider<_SelectionMode, bool>(
+  _SelectionMode.new,
+);
 
 class PlaylistsView extends ConsumerWidget {
   const PlaylistsView({super.key});
@@ -34,7 +51,11 @@ class PlaylistsView extends ConsumerWidget {
       context: context,
       color: colors.surfaceAlt,
       position: RelativeRect.fromLTRB(
-          position.dx, position.dy, position.dx, position.dy),
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
       items: [
         _menuItem('play_next', Icons.playlist_play, 'Play next', colors),
         _menuItem('queue', Icons.queue_music, 'Add to queue', colors),
@@ -46,7 +67,11 @@ class PlaylistsView extends ConsumerWidget {
         ),
         _menuItem('tags', Icons.edit_note, 'Edit tags…', colors),
         _menuItem(
-            'remove', Icons.playlist_remove, 'Remove from playlist', colors),
+          'remove',
+          Icons.playlist_remove,
+          'Remove from playlist',
+          colors,
+        ),
       ],
     ).then((value) {
       if (!context.mounted) return;
@@ -63,11 +88,74 @@ class PlaylistsView extends ConsumerWidget {
             builder: (context) => TagEditorDialog(track: track),
           );
         case 'remove':
-          ref
-              .read(databaseProvider)
-              .removeTrackFromPlaylist(playlistId, track.id);
+          _removeWithUndo(context, ref, playlistId, [track]);
       }
     });
+  }
+
+  Future<void> _removeWithUndo(
+    BuildContext context,
+    WidgetRef ref,
+    int playlistId,
+    List<db.Track> tracks,
+  ) async {
+    final database = ref.read(databaseProvider);
+    final before = await database.watchPlaylistTracks(playlistId).first;
+    for (final track in tracks) {
+      await database.removeTrackFromPlaylist(playlistId, track.id);
+    }
+    if (context.mounted) {
+      showUndo(
+        context,
+        'Removed ${tracks.length} tracks from playlist.',
+        () async {
+          await database.addTracksToPlaylist(
+            playlistId,
+            tracks.map((t) => t.id).toList(),
+          );
+          final current = await database.watchPlaylistTracks(playlistId).first;
+          await database.reorderPlaylist(playlistId, [
+            ...before.map((t) => t.id),
+            ...current
+                .where((t) => !before.any((b) => b.id == t.id))
+                .map((t) => t.id),
+          ]);
+        },
+      );
+    }
+  }
+
+  Future<void> _importM3u(BuildContext context, WidgetRef ref) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['m3u', 'm3u8'],
+    );
+    if (result?.files.single.path == null) return;
+    try {
+      final imported = await FileExchange(
+        ref.read(databaseProvider),
+      ).importPlaylist(result!.files.single.path!);
+      ref.read(selectedPlaylistIdProvider.notifier).select(imported.playlistId);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported ${imported.imported} tracks; ${imported.skipped} missing or unsupported.',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not import playlist. Check the file and try again.',
+            ),
+          ),
+        );
+      }
+    }
   }
 
   PopupMenuItem<String> _menuItem(
@@ -90,7 +178,11 @@ class PlaylistsView extends ConsumerWidget {
 
   /// Opens the library picker and appends whatever comes back.
   Future<void> _addSongs(
-      BuildContext context, WidgetRef ref, int playlistId, String name) async {
+    BuildContext context,
+    WidgetRef ref,
+    int playlistId,
+    String name,
+  ) async {
     final trackIds = await TrackPickerDialog.show(
       context,
       title: 'Add songs to "$name"',
@@ -98,16 +190,19 @@ class PlaylistsView extends ConsumerWidget {
     );
     if (trackIds == null || trackIds.isEmpty) return;
 
-    final added =
-        await ref.read(databaseProvider).addTracksToPlaylist(playlistId, trackIds);
+    final added = await ref
+        .read(databaseProvider)
+        .addTracksToPlaylist(playlistId, trackIds);
     if (!context.mounted) return;
 
     final skipped = trackIds.length - added;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(skipped == 0
-            ? 'Added $added ${added == 1 ? 'song' : 'songs'} to "$name".'
-            : 'Added $added, skipped $skipped already in "$name".'),
+        content: Text(
+          skipped == 0
+              ? 'Added $added ${added == 1 ? 'song' : 'songs'} to "$name".'
+              : 'Added $added, skipped $skipped already in "$name".',
+        ),
       ),
     );
   }
@@ -121,16 +216,23 @@ class PlaylistsView extends ConsumerWidget {
   }
 
   void _confirmDeletePlaylist(
-      BuildContext context, WidgetRef ref, db.Playlist playlist) {
+    BuildContext context,
+    WidgetRef ref,
+    db.Playlist playlist,
+  ) {
     final colors = context.colors;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
-        title:
-            Text('Delete Playlist', style: TextStyle(color: colors.textPrimary)),
-        content: Text('Are you sure you want to delete "${playlist.name}"?',
-            style: TextStyle(color: colors.textSecondary)),
+        title: Text(
+          'Delete Playlist',
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${playlist.name}"?',
+          style: TextStyle(color: colors.textSecondary),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -140,24 +242,55 @@ class PlaylistsView extends ConsumerWidget {
             onPressed: () async {
               final database = ref.read(databaseProvider);
 
-              await (database.delete(database.playlistTracks)..where((t) => t.playlistId.equals(playlist.id))).go();
-              await (database.delete(database.playlists)..where((t) => t.id.equals(playlist.id))).go();
+              final membership = await database
+                  .watchPlaylistTracks(playlist.id)
+                  .first;
+              await (database.delete(
+                database.playlistTracks,
+              )..where((t) => t.playlistId.equals(playlist.id))).go();
+              await (database.delete(
+                database.playlists,
+              )..where((t) => t.id.equals(playlist.id))).go();
 
               if (ref.read(selectedPlaylistIdProvider) == playlist.id) {
                 ref.read(selectedPlaylistIdProvider.notifier).select(null);
               }
 
-              if (context.mounted) Navigator.pop(context);
+              if (context.mounted) {
+                Navigator.pop(context);
+                showUndo(context, 'Playlist deleted.', () async {
+                  await database
+                      .into(database.playlists)
+                      .insert(
+                        db.PlaylistsCompanion(
+                          id: drift.Value(playlist.id),
+                          name: drift.Value(playlist.name),
+                          folder: drift.Value(playlist.folder),
+                          rulesJson: drift.Value(playlist.rulesJson),
+                        ),
+                      );
+                  await database.addTracksToPlaylist(
+                    playlist.id,
+                    membership.map((t) => t.id).toList(),
+                  );
+                });
+              }
             },
-            child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.redAccent),
+            ),
           ),
         ],
-      )
+      ),
     );
   }
 
   void _renamePlaylist(
-      BuildContext context, WidgetRef ref, db.Playlist playlist) {
+    BuildContext context,
+    WidgetRef ref,
+    db.Playlist playlist,
+  ) {
     final colors = context.colors;
     final controller = TextEditingController(text: playlist.name);
 
@@ -166,17 +299,21 @@ class PlaylistsView extends ConsumerWidget {
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title:
-            Text('Rename Playlist', style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          'Rename Playlist',
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: TextField(
           controller: controller,
           autofocus: true,
           style: TextStyle(color: colors.textPrimary),
           decoration: InputDecoration(
-            enabledBorder:
-                UnderlineInputBorder(borderSide: BorderSide(color: colors.border)),
-            focusedBorder:
-                UnderlineInputBorder(borderSide: BorderSide(color: colors.accent)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: colors.border),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: colors.accent),
+            ),
           ),
         ),
         actions: [
@@ -188,13 +325,19 @@ class PlaylistsView extends ConsumerWidget {
             onPressed: () async {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
-                await ref.read(databaseProvider).renamePlaylist(playlist.id, name);
+                await ref
+                    .read(databaseProvider)
+                    .renamePlaylist(playlist.id, name);
               }
               if (context.mounted) Navigator.pop(context);
             },
-            child: Text('Rename',
-                style: TextStyle(
-                    color: colors.accent, fontWeight: FontWeight.bold)),
+            child: Text(
+              'Rename',
+              style: TextStyle(
+                color: colors.accent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -210,8 +353,13 @@ class PlaylistsView extends ConsumerWidget {
 
   /// Drag-to-reorder track list. A DataTable can't be reordered, so the
   /// playlist body is a list — the order *is* the point of a playlist.
-  Widget _playlistTracks(BuildContext context, WidgetRef ref, int playlistId,
-      String playlistName, List<db.Track> tracks) {
+  Widget _playlistTracks(
+    BuildContext context,
+    WidgetRef ref,
+    int playlistId,
+    String playlistName,
+    List<db.Track> tracks,
+  ) {
     final colors = context.colors;
 
     return Column(
@@ -225,6 +373,28 @@ class PlaylistsView extends ConsumerWidget {
                 style: TextStyle(color: colors.textFaint, fontSize: 12),
               ),
               const Spacer(),
+              IconButton(
+                tooltip: 'Select multiple tracks',
+                onPressed: () =>
+                    ref.read(_selectionModeProvider.notifier).toggle(),
+                icon: const Icon(Icons.checklist),
+              ),
+              IconButton(
+                tooltip: 'Export M3U8 playlist',
+                icon: const Icon(Icons.download),
+                onPressed: () async {
+                  final path = await FilePicker.platform.saveFile(
+                    fileName: '$playlistName.m3u8',
+                    type: FileType.custom,
+                    allowedExtensions: ['m3u8'],
+                  );
+                  if (path != null) {
+                    await FileExchange(
+                      ref.read(databaseProvider),
+                    ).exportPlaylist(path, tracks);
+                  }
+                },
+              ),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
                   backgroundColor: colors.accent,
@@ -259,74 +429,107 @@ class PlaylistsView extends ConsumerWidget {
           ),
         ),
         Expanded(
-          child: ReorderableListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            buildDefaultDragHandles: false,
-            itemCount: tracks.length,
-            // onReorderItem hands over the target index already adjusted for
-            // the removed row, so the list can be rebuilt as-is.
-            onReorderItem: (oldIndex, newIndex) {
-              final reordered = [...tracks];
-              final moved = reordered.removeAt(oldIndex);
-              reordered.insert(newIndex.clamp(0, reordered.length), moved);
-              ref.read(databaseProvider).reorderPlaylist(
-                    playlistId,
-                    [for (final track in reordered) track.id],
-                  );
-            },
-            itemBuilder: (context, index) {
-              final track = tracks[index];
-              return GestureDetector(
-                key: ValueKey('playlist-track-${track.id}'),
-                behavior: HitTestBehavior.opaque,
-                onSecondaryTapDown: (details) => _showTrackMenu(
-                    context, ref, track, playlistId, details.globalPosition),
-                child: ListTile(
-                  leading: ArtThumb(path: track.coverArtPath, size: 40),
-                  title: Text(track.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colors.textPrimary)),
-                  subtitle: Text(track.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colors.textFaint, fontSize: 12)),
-                  onTap: () => ref
-                      .read(playbackControllerProvider)
-                      .playFromContext(tracks, index),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_formatDurationMs(track.durationMs),
-                          style: TextStyle(color: colors.textFaint, fontSize: 12)),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: track.isFavorite
-                            ? 'Remove from favorites'
-                            : 'Add to favorites',
-                        icon: Icon(
-                          track.isFavorite
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          size: 18,
+          child:
+              ref.watch(_selectionModeProvider) ||
+                  (ref.watch(playlistsProvider).value ?? []).any(
+                    (p) => p.id == playlistId && p.rulesJson != null,
+                  )
+              ? TrackTable(
+                  tracks: tracks,
+                  onRemoveFromPlaylist: (track) =>
+                      _removeWithUndo(context, ref, playlistId, [track]),
+                )
+              : ReorderableListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  buildDefaultDragHandles: false,
+                  itemCount: tracks.length,
+                  // onReorderItem hands over the target index already adjusted for
+                  // the removed row, so the list can be rebuilt as-is.
+                  onReorderItem: (oldIndex, newIndex) {
+                    final reordered = [...tracks];
+                    final moved = reordered.removeAt(oldIndex);
+                    reordered.insert(
+                      newIndex.clamp(0, reordered.length),
+                      moved,
+                    );
+                    ref.read(databaseProvider).reorderPlaylist(playlistId, [
+                      for (final track in reordered) track.id,
+                    ]);
+                  },
+                  itemBuilder: (context, index) {
+                    final track = tracks[index];
+                    return GestureDetector(
+                      key: ValueKey('playlist-track-${track.id}'),
+                      behavior: HitTestBehavior.opaque,
+                      onSecondaryTapDown: (details) => _showTrackMenu(
+                        context,
+                        ref,
+                        track,
+                        playlistId,
+                        details.globalPosition,
+                      ),
+                      child: ListTile(
+                        leading: ArtThumb(path: track.coverArtPath, size: 40),
+                        title: Text(
+                          track.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: colors.textPrimary),
                         ),
-                        color:
-                            track.isFavorite ? colors.accent : colors.textFaint,
-                        onPressed: () => ref
-                            .read(databaseProvider)
-                            .setFavorite(track.id, !track.isFavorite),
+                        subtitle: Text(
+                          track.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textFaint,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onTap: () => ref
+                            .read(playbackControllerProvider)
+                            .playFromContext(tracks, index),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _formatDurationMs(track.durationMs),
+                              style: TextStyle(
+                                color: colors.textFaint,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              tooltip: track.isFavorite
+                                  ? 'Remove from favorites'
+                                  : 'Add to favorites',
+                              icon: Icon(
+                                track.isFavorite
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                                size: 18,
+                              ),
+                              color: track.isFavorite
+                                  ? colors.accent
+                                  : colors.textFaint,
+                              onPressed: () => ref
+                                  .read(databaseProvider)
+                                  .setFavorite(track.id, !track.isFavorite),
+                            ),
+                            ReorderableDragStartListener(
+                              index: index,
+                              child: Icon(
+                                Icons.drag_handle,
+                                color: colors.textFaint,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: Icon(Icons.drag_handle,
-                            color: colors.textFaint, size: 18),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
@@ -337,8 +540,10 @@ class PlaylistsView extends ConsumerWidget {
     final colors = context.colors;
     final playlistsAsync = ref.watch(playlistsProvider);
     final selectedPlaylistId = ref.watch(selectedPlaylistIdProvider);
-    final selectedPlaylist =
-        _findPlaylist(playlistsAsync.value, selectedPlaylistId);
+    final selectedPlaylist = _findPlaylist(
+      playlistsAsync.value,
+      selectedPlaylistId,
+    );
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -359,87 +564,210 @@ class PlaylistsView extends ConsumerWidget {
             decoration: BoxDecoration(
               border: Border(right: BorderSide(color: colors.border)),
             ),
-            child: playlistsAsync.when(
-              data: (playlists) {
-                if (playlists.isEmpty) {
-                  return Center(
-                    child: Text('No playlists yet.',
-                        style: TextStyle(color: colors.textFaint)),
-                  );
-                }
-                return ListView.builder(
-                  itemCount: playlists.length,
-                  itemBuilder: (context, index) {
-                    final playlist = playlists[index];
-                    final isSelected = playlist.id == selectedPlaylistId;
-
-                    return ListTile(
-                      selected: isSelected,
-                      selectedTileColor: colors.surface,
-                      leading: Icon(
-                        Icons.queue_music,
-                        color: isSelected ? colors.accent : colors.textFaint,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _importM3u(context, ref),
+                        icon: const Icon(Icons.upload),
+                        label: const Text('Import M3U'),
                       ),
-                      title: Text(
-                        playlist.name,
-                        style: TextStyle(
-                          color:
-                              isSelected ? colors.accent : colors.textSecondary,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        tooltip: 'Playlist actions',
-                        color: colors.surfaceAlt,
-                        icon: Icon(Icons.more_vert,
-                            color: colors.textFaint, size: 20),
-                        onSelected: (value) {
-                          if (value == 'add') {
-                            _addSongs(
-                                context, ref, playlist.id, playlist.name);
-                          } else if (value == 'rename') {
-                            _renamePlaylist(context, ref, playlist);
-                          } else if (value == 'delete') {
-                            _confirmDeletePlaylist(context, ref, playlist);
+                      IconButton(
+                        tooltip: 'New smart playlist',
+                        icon: const Icon(Icons.auto_awesome_motion),
+                        onPressed: () async {
+                          final database = ref.read(databaseProvider);
+                          final id = await database.createPlaylist(
+                            'Smart playlist',
+                          );
+                          await (database.update(
+                            database.playlists,
+                          )..where((p) => p.id.equals(id))).write(
+                            const db.PlaylistsCompanion(
+                              rulesJson: drift.Value('{}'),
+                            ),
+                          );
+                          ref
+                              .read(selectedPlaylistIdProvider.notifier)
+                              .select(id);
+                          final playlist = await (database.select(
+                            database.playlists,
+                          )..where((p) => p.id.equals(id))).getSingle();
+                          if (context.mounted) {
+                            await showDialog(
+                              context: context,
+                              builder: (_) =>
+                                  PlaylistDetailsDialog(playlist: playlist),
+                            );
                           }
                         },
-                        itemBuilder: (context) => [
-                          _menuItem(
-                              'add', Icons.library_add, 'Add songs…', colors),
-                          _menuItem('rename', Icons.drive_file_rename_outline,
-                              'Rename', colors),
-                          _menuItem(
-                              'delete', Icons.delete_outline, 'Delete', colors),
-                        ],
                       ),
-                      onTap: () {
-                        ref
-                            .read(selectedPlaylistIdProvider.notifier)
-                            .select(playlist.id);
-                      },
-                    );
-                  },
-                );
-              },
-              loading: () =>
-                  Center(child: CircularProgressIndicator(color: colors.accent)),
-              error: (err, stack) => Center(
-                  child: Text('Error: $err',
-                      style: const TextStyle(color: Colors.red))),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: playlistsAsync.when(
+                    data: (allPlaylists) {
+                      final playlists = [...allPlaylists]
+                        ..sort(
+                          (a, b) => '${a.folder ?? ""} ${a.name}'.compareTo(
+                            '${b.folder ?? ""} ${b.name}',
+                          ),
+                        );
+                      if (playlists.isEmpty) {
+                        return Center(
+                          child: Text(
+                            'No playlists yet.',
+                            style: TextStyle(color: colors.textFaint),
+                          ),
+                        );
+                      }
+                      return ListView.builder(
+                        itemCount: playlists.length,
+                        itemBuilder: (context, index) {
+                          final playlist = playlists[index];
+                          final isSelected = playlist.id == selectedPlaylistId;
+
+                          return GestureDetector(
+                            onSecondaryTapDown: (d) async {
+                              final tracks = await ref.read(
+                                playlistTracksProvider(playlist.id).future,
+                              );
+                              if (context.mounted) {
+                                await showTrackActions(
+                                  context,
+                                  ref,
+                                  tracks,
+                                  d.globalPosition,
+                                );
+                              }
+                            },
+                            child: ListTile(
+                              selected: isSelected,
+                              selectedTileColor: colors.surface,
+                              leading: Icon(
+                                playlist.rulesJson == null
+                                    ? Icons.queue_music
+                                    : Icons.auto_awesome_motion,
+                                color: isSelected
+                                    ? colors.accent
+                                    : colors.textFaint,
+                              ),
+                              subtitle: playlist.folder == null
+                                  ? null
+                                  : Text(
+                                      playlist.folder!,
+                                      style: TextStyle(color: colors.textFaint),
+                                    ),
+                              title: Text(
+                                playlist.name,
+                                style: TextStyle(
+                                  color: isSelected
+                                      ? colors.accent
+                                      : colors.textSecondary,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                              trailing: PopupMenuButton<String>(
+                                tooltip: 'Playlist actions',
+                                color: colors.surfaceAlt,
+                                icon: Icon(
+                                  Icons.more_vert,
+                                  color: colors.textFaint,
+                                  size: 20,
+                                ),
+                                onSelected: (value) {
+                                  if (value == 'organize') {
+                                    showDialog(
+                                      context: context,
+                                      builder: (_) => PlaylistDetailsDialog(
+                                        playlist: playlist,
+                                      ),
+                                    );
+                                  } else if (value == 'add') {
+                                    _addSongs(
+                                      context,
+                                      ref,
+                                      playlist.id,
+                                      playlist.name,
+                                    );
+                                  } else if (value == 'rename') {
+                                    _renamePlaylist(context, ref, playlist);
+                                  } else if (value == 'delete') {
+                                    _confirmDeletePlaylist(
+                                      context,
+                                      ref,
+                                      playlist,
+                                    );
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  _menuItem(
+                                    'organize',
+                                    Icons.folder_copy_outlined,
+                                    'Folder & smart rules...',
+                                    colors,
+                                  ),
+                                  _menuItem(
+                                    'add',
+                                    Icons.library_add,
+                                    'Add songs…',
+                                    colors,
+                                  ),
+                                  _menuItem(
+                                    'rename',
+                                    Icons.drive_file_rename_outline,
+                                    'Rename',
+                                    colors,
+                                  ),
+                                  _menuItem(
+                                    'delete',
+                                    Icons.delete_outline,
+                                    'Delete',
+                                    colors,
+                                  ),
+                                ],
+                              ),
+                              onTap: () {
+                                ref
+                                    .read(selectedPlaylistIdProvider.notifier)
+                                    .select(playlist.id);
+                              },
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    loading: () => Center(
+                      child: CircularProgressIndicator(color: colors.accent),
+                    ),
+                    error: (err, stack) => RetryMessage(
+                      onRetry: () => ref.invalidate(playlistsProvider),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 
           Expanded(
             child: selectedPlaylistId == null
                 ? Center(
-                    child: Text('Select a playlist to view its tracks.',
-                        style: TextStyle(color: colors.textFaint)),
+                    child: Text(
+                      'Select a playlist to view its tracks.',
+                      style: TextStyle(color: colors.textFaint),
+                    ),
                   )
                 : Consumer(
                     builder: (context, ref, child) {
-                      final tracksAsync =
-                          ref.watch(playlistTracksProvider(selectedPlaylistId));
+                      final tracksAsync = ref.watch(
+                        playlistTracksProvider(selectedPlaylistId),
+                      );
 
                       final name = selectedPlaylist?.name ?? 'playlist';
 
@@ -450,17 +778,22 @@ class PlaylistsView extends ConsumerWidget {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text('This playlist is empty.',
-                                      style:
-                                          TextStyle(color: colors.textFaint)),
+                                  Text(
+                                    'This playlist is empty.',
+                                    style: TextStyle(color: colors.textFaint),
+                                  ),
                                   const SizedBox(height: 12),
                                   FilledButton.icon(
                                     style: FilledButton.styleFrom(
                                       backgroundColor: colors.accent,
                                       foregroundColor: colors.onAccent,
                                     ),
-                                    onPressed: () => _addSongs(context, ref,
-                                        selectedPlaylistId, name),
+                                    onPressed: () => _addSongs(
+                                      context,
+                                      ref,
+                                      selectedPlaylistId,
+                                      name,
+                                    ),
                                     icon: const Icon(Icons.library_add),
                                     label: const Text('Add songs'),
                                   ),
@@ -469,14 +802,23 @@ class PlaylistsView extends ConsumerWidget {
                             );
                           }
                           return _playlistTracks(
-                              context, ref, selectedPlaylistId, name, tracks);
+                            context,
+                            ref,
+                            selectedPlaylistId,
+                            name,
+                            tracks,
+                          );
                         },
                         loading: () => Center(
-                            child:
-                                CircularProgressIndicator(color: colors.accent)),
-                        error: (err, stack) => Center(
-                            child: Text('Error: $err',
-                                style: const TextStyle(color: Colors.red))),
+                          child: CircularProgressIndicator(
+                            color: colors.accent,
+                          ),
+                        ),
+                        error: (err, stack) => RetryMessage(
+                          onRetry: () => ref.invalidate(
+                            playlistTracksProvider(selectedPlaylistId),
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -491,7 +833,8 @@ class CreatePlaylistDialog extends ConsumerStatefulWidget {
   const CreatePlaylistDialog({super.key});
 
   @override
-  ConsumerState<CreatePlaylistDialog> createState() => _CreatePlaylistDialogState();
+  ConsumerState<CreatePlaylistDialog> createState() =>
+      _CreatePlaylistDialogState();
 }
 
 class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
@@ -544,8 +887,10 @@ class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
     return AlertDialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('Create New Playlist',
-          style: TextStyle(color: colors.textPrimary)),
+      title: Text(
+        'Create New Playlist',
+        style: TextStyle(color: colors.textPrimary),
+      ),
       content: SizedBox(
         width: 360,
         child: Column(
@@ -561,9 +906,11 @@ class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
                 hintText: 'e.g., Late Night Coding',
                 hintStyle: TextStyle(color: colors.textFaint),
                 enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: colors.border)),
+                  borderSide: BorderSide(color: colors.border),
+                ),
                 focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: colors.accent)),
+                  borderSide: BorderSide(color: colors.accent),
+                ),
               ),
             ),
             const SizedBox(height: 20),
@@ -572,25 +919,30 @@ class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor:
-                          count == 0 ? colors.textSecondary : colors.accent,
+                      foregroundColor: count == 0
+                          ? colors.textSecondary
+                          : colors.accent,
                       side: BorderSide(
-                          color: count == 0 ? colors.border : colors.accent),
+                        color: count == 0 ? colors.border : colors.accent,
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     onPressed: _saving ? null : _pickTracks,
                     icon: const Icon(Icons.library_music, size: 18),
-                    label: Text(count == 0
-                        ? 'Choose songs from library'
-                        : '$count ${count == 1 ? 'song' : 'songs'} chosen — edit'),
+                    label: Text(
+                      count == 0
+                          ? 'Choose songs from library'
+                          : '$count ${count == 1 ? 'song' : 'songs'} chosen — edit',
+                    ),
                   ),
                 ),
                 if (count > 0)
                   IconButton(
                     tooltip: 'Clear chosen songs',
                     icon: Icon(Icons.close, color: colors.textFaint, size: 18),
-                    onPressed:
-                        _saving ? null : () => setState(() => _trackIds = const []),
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() => _trackIds = const []),
                   ),
               ],
             ),
@@ -609,9 +961,10 @@ class _CreatePlaylistDialogState extends ConsumerState<CreatePlaylistDialog> {
         ),
         TextButton(
           onPressed: _saving ? null : _create,
-          child: Text('Create',
-              style:
-                  TextStyle(color: colors.accent, fontWeight: FontWeight.bold)),
+          child: Text(
+            'Create',
+            style: TextStyle(color: colors.accent, fontWeight: FontWeight.bold),
+          ),
         ),
       ],
     );
