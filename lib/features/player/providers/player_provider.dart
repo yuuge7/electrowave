@@ -184,6 +184,20 @@ class PlaybackController {
   int _generation = 0;
   Player? _tail;
   double? _fadeVolume;
+  Future<void> _nativePending = Future.value();
+
+  // Opening and editing the native playlist must be one ordered operation.
+  // media_kit serializes individual calls, but an older preload could still
+  // append to a newer open between those calls and change the selected song.
+  Future<void> _serialize(Future<void> Function() operation) {
+    final result = _nativePending.then((_) async {
+      if (!_disposed) await operation();
+    });
+    _nativePending = result.catchError(
+      (Object e, StackTrace st) => LocalLog.write(e, st),
+    );
+    return result;
+  }
 
   Future<void> _stopTail() async {
     final tail = _tail;
@@ -200,13 +214,28 @@ class PlaybackController {
     db.Track track, {
     bool play = true,
     Duration start = Duration.zero,
-  }) async {
+  }) {
     final generation = ++_generation;
-    await _stopTail();
     _opening = true;
     _prepared = null;
+    return _serialize(
+      () => _openNow(track, generation, play: play, start: start),
+    );
+  }
+
+  Future<void> _openNow(
+    db.Track track,
+    int generation, {
+    required bool play,
+    required Duration start,
+  }) async {
+    if (generation != _generation || _disposed) return;
+    await _stopTail();
+    if (generation != _generation || _disposed) return;
     try {
-      if (!await File(track.filePath).exists()) {
+      final exists = await File(track.filePath).exists();
+      if (generation != _generation || _disposed) return;
+      if (!exists) {
         LocalLog.write('File missing: ${track.filePath}');
         // Marking the queue snapshot avoids retry loops before a rescan.
         final q = ref.read(queueProvider);
@@ -234,7 +263,7 @@ class PlaybackController {
         Playlist([Media(track.filePath, start: start)]),
         play: play,
       );
-      if (generation != _generation) return;
+      if (generation != _generation || _disposed) return;
       await ref.read(audioEngineProvider).reapplyRate();
       await ref.read(audioEngineProvider).setTrackGain(track.replayGainDb);
     } catch (e, st) {
@@ -255,6 +284,29 @@ class PlaybackController {
   Future<void> setVolume(double volume) async {
     await _stopTail();
     await ref.read(playerProvider).setVolume(volume.clamp(0, 100));
+  }
+
+  Future<void> play() async {
+    final track = ref.read(currentTrackProvider);
+    if (track == null) return;
+    final player = ref.read(playerProvider);
+    // media_kit restarts the first item of its native playlist at EOF. Our
+    // playlist also contains earlier gapless tracks, so reopen the displayed
+    // track instead of silently playing an older song under its metadata.
+    if (player.state.completed || player.state.playlist.medias.isEmpty) {
+      await _open(track);
+    } else {
+      await player.play();
+    }
+  }
+
+  Future<void> togglePlayback() async {
+    final player = ref.read(playerProvider);
+    if (player.state.playing && !player.state.completed) {
+      await player.pause();
+    } else {
+      await play();
+    }
   }
 
   Future<void> restoreTrack(db.Track track, Duration start) =>
@@ -322,53 +374,82 @@ class PlaybackController {
   Future<void> _syncUpcoming() async {
     if (_syncing || _opening || _disposed || _fading) return;
     _syncing = true;
+    final generation = _generation;
     try {
-      do {
-        _syncAgain = false;
-        final player = ref.read(playerProvider);
-        if (ref.read(currentTrackProvider) == null ||
-            player.state.playlist.medias.isEmpty) {
-          break;
-        }
-        var next = (ref.read(sleepTimerProvider)?.endOfTrack ?? false)
-            ? null
-            : _next();
-        // Stale flags can occur between a deletion and a watcher event.
-        final attempted = <int>{};
-        while (next != null && !await File(next.track.filePath).exists()) {
-          if (!attempted.add(next.track.id)) {
-            next = null;
+      await _serialize(() async {
+        do {
+          _syncAgain = false;
+          if (generation != _generation || _opening || _disposed || _fading) {
+            return;
+          }
+          final player = ref.read(playerProvider);
+          if (ref.read(currentTrackProvider) == null ||
+              player.state.playlist.medias.isEmpty) {
             break;
           }
-          final q = next.queue;
-          ref
-              .read(queueProvider.notifier)
-              .replace(
-                q.copyWith(
-                  context: q.context
-                      .map(
-                        (t) => t.id == next!.track.id
-                            ? t.copyWith(isMissing: true)
-                            : t,
-                      )
-                      .toList(),
-                ),
-              );
-          next = _next();
-        }
-        final index = player.state.playlist.index;
-        _prepared = null;
-        for (var i = player.state.playlist.medias.length - 1; i > index; i--) {
-          await player.remove(i);
-        }
-        if (next != null) {
-          _prepared = next;
-          final media = Media(next.track.filePath);
-          _preparedUri = media.uri;
-          _preparedIndex = index + 1;
-          await player.add(media);
-        }
-      } while (_syncAgain && !_opening && !_disposed);
+          var next = (ref.read(sleepTimerProvider)?.endOfTrack ?? false)
+              ? null
+              : _next();
+          // Stale flags can occur between a deletion and a watcher event.
+          final attempted = <int>{};
+          while (next != null && !await File(next.track.filePath).exists()) {
+            if (!attempted.add(next.track.id)) {
+              next = null;
+              break;
+            }
+            if (generation != _generation || _opening || _disposed) return;
+            final q = ref.read(queueProvider);
+            final missingId = next.track.id;
+            ref
+                .read(queueProvider.notifier)
+                .replace(
+                  q.copyWith(
+                    context: q.context
+                        .map(
+                          (t) => t.id == next!.track.id
+                              ? t.copyWith(isMissing: true)
+                              : t,
+                        )
+                        .toList(),
+                    manualQueue: q.manualQueue
+                        .where((t) => t.id != missingId)
+                        .toList(),
+                  ),
+                );
+            next = _next();
+          }
+          if (generation != _generation || _opening || _disposed) return;
+          final index = player.state.playlist.index;
+          // A queue edit can change the state captured for the next track even
+          // when its file is unchanged. Keep that snapshot without rebuilding
+          // the native playlist while it is about to advance.
+          if (next != null &&
+              _prepared?.track.id == next.track.id &&
+              _preparedIndex == index + 1 &&
+              player.state.playlist.medias.length > index + 1 &&
+              player.state.playlist.medias[index + 1].uri ==
+                  Media(next.track.filePath).uri) {
+            _prepared = next;
+            continue;
+          }
+          _prepared = null;
+          for (
+            var i = player.state.playlist.medias.length - 1;
+            i > index;
+            i--
+          ) {
+            await player.remove(i);
+            if (generation != _generation || _opening || _disposed) return;
+          }
+          if (next != null) {
+            _prepared = next;
+            final media = Media(next.track.filePath);
+            _preparedUri = media.uri;
+            _preparedIndex = index + 1;
+            await player.add(media);
+          }
+        } while (_syncAgain && !_opening && !_disposed);
+      });
     } catch (e, st) {
       LocalLog.write(e, st);
     } finally {
@@ -442,19 +523,27 @@ class PlaybackController {
     final engine = AudioEngine(tail);
     try {
       await engine.applyAudioSettings(settings);
+      await engine.setTrackGain(outgoing.replayGainDb);
       await engine.setRate(settings.playbackRate);
       await tail.setVolume(0);
       await tail.open(Media(outgoing.filePath, start: player.state.position));
-      if (generation != _generation || _disposed) return;
-      await player.setVolume(0);
-      await tail.setVolume(volume);
-      _prepared = null;
-      _opening = true;
-      await player.open(Playlist([Media(next.track.filePath)]));
-      ref.read(currentTrackProvider.notifier).setTrack(next.track);
-      ref.read(queueProvider.notifier).replace(next.queue);
-      _opening = false;
-      await ref.read(audioEngineProvider).reapplyRate();
+      if (generation != _generation || _disposed || _tail != tail) return;
+      await _serialize(() async {
+        if (generation != _generation || _tail != tail) return;
+        await player.setVolume(0);
+        await tail.setVolume(volume);
+        _prepared = null;
+        _opening = true;
+        await player.open(Playlist([Media(next.track.filePath)]));
+        if (generation != _generation || _disposed) return;
+        ref.read(currentTrackProvider.notifier).setTrack(next.track);
+        ref.read(queueProvider.notifier).replace(next.queue);
+        _opening = false;
+        await ref.read(audioEngineProvider).reapplyRate();
+        await ref
+            .read(audioEngineProvider)
+            .setTrackGain(next.track.replayGainDb);
+      });
       final duration = remaining.inMilliseconds.clamp(100, 12000);
       while (generation == _generation && !_disposed && _tail == tail) {
         await Future<void>.delayed(const Duration(milliseconds: 40));
@@ -473,7 +562,7 @@ class PlaybackController {
       if (tailMs > 0 && !_disposed) {
         ref.read(tailListeningProvider).add(TailListening(outgoing.id, tailMs));
       }
-      _opening = false;
+      if (generation == _generation) _opening = false;
       if (_tail == tail) await _stopTail();
       _scheduleSync();
     }

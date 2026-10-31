@@ -361,71 +361,79 @@ class PlaylistsView extends ConsumerWidget {
     List<db.Track> tracks,
   ) {
     final colors = context.colors;
+    final smart = (ref.watch(playlistsProvider).value ?? []).any(
+      (p) => p.id == playlistId && p.rulesJson != null,
+    );
 
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(
-            children: [
-              Text(
-                '${tracks.length} tracks',
-                style: TextStyle(color: colors.textFaint, fontSize: 12),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Select multiple tracks',
-                onPressed: () =>
-                    ref.read(_selectionModeProvider.notifier).toggle(),
-                icon: const Icon(Icons.checklist),
-              ),
-              IconButton(
-                tooltip: 'Export M3U8 playlist',
-                icon: const Icon(Icons.download),
-                onPressed: () async {
-                  final path = await FilePicker.platform.saveFile(
-                    fileName: '$playlistName.m3u8',
-                    type: FileType.custom,
-                    allowedExtensions: ['m3u8'],
-                  );
-                  if (path != null) {
-                    await FileExchange(
-                      ref.read(databaseProvider),
-                    ).exportPlaylist(path, tracks);
-                  }
-                },
-              ),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: colors.accent,
-                  foregroundColor: colors.onAccent,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${tracks.length} tracks',
+                  style: TextStyle(color: colors.textFaint, fontSize: 12),
                 ),
-                onPressed: () => _playAll(ref, tracks, shuffle: false),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Play'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.border),
+                const SizedBox(width: 16),
+                IconButton(
+                  tooltip: 'Select multiple tracks',
+                  onPressed: () =>
+                      ref.read(_selectionModeProvider.notifier).toggle(),
+                  icon: const Icon(Icons.checklist),
                 ),
-                onPressed: () => _playAll(ref, tracks, shuffle: true),
-                icon: const Icon(Icons.shuffle),
-                label: const Text('Shuffle'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.border),
+                IconButton(
+                  tooltip: 'Export M3U8 playlist',
+                  icon: const Icon(Icons.download),
+                  onPressed: () async {
+                    final path = await FilePicker.platform.saveFile(
+                      fileName: '$playlistName.m3u8',
+                      type: FileType.custom,
+                      allowedExtensions: ['m3u8'],
+                    );
+                    if (path != null) {
+                      await FileExchange(
+                        ref.read(databaseProvider),
+                      ).exportPlaylist(path, tracks);
+                    }
+                  },
                 ),
-                onPressed: () =>
-                    _addSongs(context, ref, playlistId, playlistName),
-                icon: const Icon(Icons.library_add),
-                label: const Text('Add songs'),
-              ),
-            ],
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.accent,
+                    foregroundColor: colors.onAccent,
+                  ),
+                  onPressed: () => _playAll(ref, tracks, shuffle: false),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Play'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textSecondary,
+                    side: BorderSide(color: colors.border),
+                  ),
+                  onPressed: () => _playAll(ref, tracks, shuffle: true),
+                  icon: const Icon(Icons.shuffle),
+                  label: const Text('Shuffle'),
+                ),
+                if (!smart) const SizedBox(width: 8),
+                if (!smart)
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.textSecondary,
+                      side: BorderSide(color: colors.border),
+                    ),
+                    onPressed: () =>
+                        _addSongs(context, ref, playlistId, playlistName),
+                    icon: const Icon(Icons.library_add),
+                    label: const Text('Add songs'),
+                  ),
+              ],
+            ),
           ),
         ),
         Expanded(
@@ -436,8 +444,10 @@ class PlaylistsView extends ConsumerWidget {
                   )
               ? TrackTable(
                   tracks: tracks,
-                  onRemoveFromPlaylist: (track) =>
-                      _removeWithUndo(context, ref, playlistId, [track]),
+                  onRemoveFromPlaylist: smart
+                      ? null
+                      : (selected) =>
+                            _removeWithUndo(context, ref, playlistId, selected),
                 )
               : ReorderableListView.builder(
                   padding: const EdgeInsets.symmetric(vertical: 8),
@@ -557,273 +567,321 @@ class PlaylistsView extends ConsumerWidget {
         },
         child: Icon(Icons.add, color: colors.onAccent),
       ),
-      body: Row(
-        children: [
-          Container(
-            width: 250,
-            decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: colors.border)),
-            ),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 900;
+          return Flex(
+            direction: compact ? Axis.vertical : Axis.horizontal,
+            children: [
+              if (compact && selectedPlaylistId != null)
+                SizedBox(
+                  height: 48,
                   child: Row(
                     children: [
-                      TextButton.icon(
-                        onPressed: () => _importM3u(context, ref),
-                        icon: const Icon(Icons.upload),
-                        label: const Text('Import M3U'),
-                      ),
                       IconButton(
-                        tooltip: 'New smart playlist',
-                        icon: const Icon(Icons.auto_awesome_motion),
-                        onPressed: () async {
-                          final database = ref.read(databaseProvider);
-                          final id = await database.createPlaylist(
-                            'Smart playlist',
-                          );
-                          await (database.update(
-                            database.playlists,
-                          )..where((p) => p.id.equals(id))).write(
-                            const db.PlaylistsCompanion(
-                              rulesJson: drift.Value('{}'),
-                            ),
-                          );
-                          ref
-                              .read(selectedPlaylistIdProvider.notifier)
-                              .select(id);
-                          final playlist = await (database.select(
-                            database.playlists,
-                          )..where((p) => p.id.equals(id))).getSingle();
-                          if (context.mounted) {
-                            await showDialog(
-                              context: context,
-                              builder: (_) =>
-                                  PlaylistDetailsDialog(playlist: playlist),
-                            );
-                          }
-                        },
+                        tooltip: 'All playlists',
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => ref
+                            .read(selectedPlaylistIdProvider.notifier)
+                            .select(null),
+                      ),
+                      Expanded(
+                        child: Text(
+                          selectedPlaylist?.name ?? 'Playlist',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                Expanded(
-                  child: playlistsAsync.when(
-                    data: (allPlaylists) {
-                      final playlists = [...allPlaylists]
-                        ..sort(
-                          (a, b) => '${a.folder ?? ""} ${a.name}'.compareTo(
-                            '${b.folder ?? ""} ${b.name}',
-                          ),
-                        );
-                      if (playlists.isEmpty) {
-                        return Center(
-                          child: Text(
-                            'No playlists yet.',
-                            style: TextStyle(color: colors.textFaint),
-                          ),
-                        );
-                      }
-                      return ListView.builder(
-                        itemCount: playlists.length,
-                        itemBuilder: (context, index) {
-                          final playlist = playlists[index];
-                          final isSelected = playlist.id == selectedPlaylistId;
-
-                          return GestureDetector(
-                            onSecondaryTapDown: (d) async {
-                              final tracks = await ref.read(
-                                playlistTracksProvider(playlist.id).future,
-                              );
-                              if (context.mounted) {
-                                await showTrackActions(
-                                  context,
-                                  ref,
-                                  tracks,
-                                  d.globalPosition,
+              if (!compact || selectedPlaylistId == null)
+                Container(
+                  width: compact ? double.infinity : 250,
+                  height: compact ? constraints.maxHeight : null,
+                  decoration: BoxDecoration(
+                    border: Border(right: BorderSide(color: colors.border)),
+                  ),
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => _importM3u(context, ref),
+                              icon: const Icon(Icons.upload),
+                              label: const Text('Import M3U'),
+                            ),
+                            IconButton(
+                              tooltip: 'New smart playlist',
+                              icon: const Icon(Icons.auto_awesome_motion),
+                              onPressed: () async {
+                                final database = ref.read(databaseProvider);
+                                final id = await database.createPlaylist(
+                                  'Smart playlist',
                                 );
-                              }
-                            },
-                            child: ListTile(
-                              selected: isSelected,
-                              selectedTileColor: colors.surface,
-                              leading: Icon(
-                                playlist.rulesJson == null
-                                    ? Icons.queue_music
-                                    : Icons.auto_awesome_motion,
-                                color: isSelected
-                                    ? colors.accent
-                                    : colors.textFaint,
-                              ),
-                              subtitle: playlist.folder == null
-                                  ? null
-                                  : Text(
-                                      playlist.folder!,
-                                      style: TextStyle(color: colors.textFaint),
-                                    ),
-                              title: Text(
-                                playlist.name,
-                                style: TextStyle(
-                                  color: isSelected
-                                      ? colors.accent
-                                      : colors.textSecondary,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                              trailing: PopupMenuButton<String>(
-                                tooltip: 'Playlist actions',
-                                color: colors.surfaceAlt,
-                                icon: Icon(
-                                  Icons.more_vert,
-                                  color: colors.textFaint,
-                                  size: 20,
-                                ),
-                                onSelected: (value) {
-                                  if (value == 'organize') {
-                                    showDialog(
-                                      context: context,
-                                      builder: (_) => PlaylistDetailsDialog(
-                                        playlist: playlist,
-                                      ),
-                                    );
-                                  } else if (value == 'add') {
-                                    _addSongs(
-                                      context,
-                                      ref,
-                                      playlist.id,
-                                      playlist.name,
-                                    );
-                                  } else if (value == 'rename') {
-                                    _renamePlaylist(context, ref, playlist);
-                                  } else if (value == 'delete') {
-                                    _confirmDeletePlaylist(
-                                      context,
-                                      ref,
-                                      playlist,
-                                    );
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  _menuItem(
-                                    'organize',
-                                    Icons.folder_copy_outlined,
-                                    'Folder & smart rules...',
-                                    colors,
+                                await (database.update(
+                                  database.playlists,
+                                )..where((p) => p.id.equals(id))).write(
+                                  const db.PlaylistsCompanion(
+                                    rulesJson: drift.Value('{}'),
                                   ),
-                                  _menuItem(
-                                    'add',
-                                    Icons.library_add,
-                                    'Add songs…',
-                                    colors,
-                                  ),
-                                  _menuItem(
-                                    'rename',
-                                    Icons.drive_file_rename_outline,
-                                    'Rename',
-                                    colors,
-                                  ),
-                                  _menuItem(
-                                    'delete',
-                                    Icons.delete_outline,
-                                    'Delete',
-                                    colors,
-                                  ),
-                                ],
-                              ),
-                              onTap: () {
+                                );
                                 ref
                                     .read(selectedPlaylistIdProvider.notifier)
-                                    .select(playlist.id);
+                                    .select(id);
+                                final playlist = await (database.select(
+                                  database.playlists,
+                                )..where((p) => p.id.equals(id))).getSingle();
+                                if (context.mounted) {
+                                  await showDialog(
+                                    context: context,
+                                    builder: (_) => PlaylistDetailsDialog(
+                                      playlist: playlist,
+                                    ),
+                                  );
+                                }
                               },
                             ),
-                          );
-                        },
-                      );
-                    },
-                    loading: () => Center(
-                      child: CircularProgressIndicator(color: colors.accent),
-                    ),
-                    error: (err, stack) => RetryMessage(
-                      onRetry: () => ref.invalidate(playlistsProvider),
-                    ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: playlistsAsync.when(
+                          data: (allPlaylists) {
+                            final playlists = [...allPlaylists]
+                              ..sort(
+                                (a, b) => '${a.folder ?? ""} ${a.name}'
+                                    .compareTo('${b.folder ?? ""} ${b.name}'),
+                              );
+                            if (playlists.isEmpty) {
+                              return Center(
+                                child: Text(
+                                  'No playlists yet.',
+                                  style: TextStyle(color: colors.textFaint),
+                                ),
+                              );
+                            }
+                            return ListView.builder(
+                              itemCount: playlists.length,
+                              itemBuilder: (context, index) {
+                                final playlist = playlists[index];
+                                final isSelected =
+                                    playlist.id == selectedPlaylistId;
+
+                                return GestureDetector(
+                                  onSecondaryTapDown: (d) async {
+                                    final tracks = await ref.read(
+                                      playlistTracksProvider(
+                                        playlist.id,
+                                      ).future,
+                                    );
+                                    if (context.mounted) {
+                                      await showTrackActions(
+                                        context,
+                                        ref,
+                                        tracks,
+                                        d.globalPosition,
+                                      );
+                                    }
+                                  },
+                                  child: ListTile(
+                                    selected: isSelected,
+                                    selectedTileColor: colors.surface,
+                                    leading: Icon(
+                                      playlist.rulesJson == null
+                                          ? Icons.queue_music
+                                          : Icons.auto_awesome_motion,
+                                      color: isSelected
+                                          ? colors.accent
+                                          : colors.textFaint,
+                                    ),
+                                    subtitle: playlist.folder == null
+                                        ? null
+                                        : Text(
+                                            playlist.folder!,
+                                            style: TextStyle(
+                                              color: colors.textFaint,
+                                            ),
+                                          ),
+                                    title: Text(
+                                      playlist.name,
+                                      style: TextStyle(
+                                        color: isSelected
+                                            ? colors.accent
+                                            : colors.textSecondary,
+                                        fontWeight: isSelected
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                    trailing: PopupMenuButton<String>(
+                                      tooltip: 'Playlist actions',
+                                      color: colors.surfaceAlt,
+                                      icon: Icon(
+                                        Icons.more_vert,
+                                        color: colors.textFaint,
+                                        size: 20,
+                                      ),
+                                      onSelected: (value) {
+                                        if (value == 'organize') {
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) =>
+                                                PlaylistDetailsDialog(
+                                                  playlist: playlist,
+                                                ),
+                                          );
+                                        } else if (value == 'add') {
+                                          _addSongs(
+                                            context,
+                                            ref,
+                                            playlist.id,
+                                            playlist.name,
+                                          );
+                                        } else if (value == 'rename') {
+                                          _renamePlaylist(
+                                            context,
+                                            ref,
+                                            playlist,
+                                          );
+                                        } else if (value == 'delete') {
+                                          _confirmDeletePlaylist(
+                                            context,
+                                            ref,
+                                            playlist,
+                                          );
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        _menuItem(
+                                          'organize',
+                                          Icons.folder_copy_outlined,
+                                          'Folder & smart rules...',
+                                          colors,
+                                        ),
+                                        if (playlist.rulesJson == null)
+                                          _menuItem(
+                                            'add',
+                                            Icons.library_add,
+                                            'Add songs…',
+                                            colors,
+                                          ),
+                                        _menuItem(
+                                          'rename',
+                                          Icons.drive_file_rename_outline,
+                                          'Rename',
+                                          colors,
+                                        ),
+                                        _menuItem(
+                                          'delete',
+                                          Icons.delete_outline,
+                                          'Delete',
+                                          colors,
+                                        ),
+                                      ],
+                                    ),
+                                    onTap: () {
+                                      ref
+                                          .read(
+                                            selectedPlaylistIdProvider.notifier,
+                                          )
+                                          .select(playlist.id);
+                                    },
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                          loading: () => Center(
+                            child: CircularProgressIndicator(
+                              color: colors.accent,
+                            ),
+                          ),
+                          error: (err, stack) => RetryMessage(
+                            onRetry: () => ref.invalidate(playlistsProvider),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
 
-          Expanded(
-            child: selectedPlaylistId == null
-                ? Center(
-                    child: Text(
-                      'Select a playlist to view its tracks.',
-                      style: TextStyle(color: colors.textFaint),
-                    ),
-                  )
-                : Consumer(
-                    builder: (context, ref, child) {
-                      final tracksAsync = ref.watch(
-                        playlistTracksProvider(selectedPlaylistId),
-                      );
+              if (!compact || selectedPlaylistId != null)
+                Expanded(
+                  child: selectedPlaylistId == null
+                      ? Center(
+                          child: Text(
+                            'Select a playlist to view its tracks.',
+                            style: TextStyle(color: colors.textFaint),
+                          ),
+                        )
+                      : Consumer(
+                          builder: (context, ref, child) {
+                            final tracksAsync = ref.watch(
+                              playlistTracksProvider(selectedPlaylistId),
+                            );
 
-                      final name = selectedPlaylist?.name ?? 'playlist';
+                            final name = selectedPlaylist?.name ?? 'playlist';
 
-                      return tracksAsync.when(
-                        data: (tracks) {
-                          if (tracks.isEmpty) {
-                            return Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'This playlist is empty.',
-                                    style: TextStyle(color: colors.textFaint),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  FilledButton.icon(
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: colors.accent,
-                                      foregroundColor: colors.onAccent,
+                            return tracksAsync.when(
+                              data: (tracks) {
+                                if (tracks.isEmpty) {
+                                  return Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          'This playlist is empty.',
+                                          style: TextStyle(
+                                            color: colors.textFaint,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        FilledButton.icon(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: colors.accent,
+                                            foregroundColor: colors.onAccent,
+                                          ),
+                                          onPressed: () => _addSongs(
+                                            context,
+                                            ref,
+                                            selectedPlaylistId,
+                                            name,
+                                          ),
+                                          icon: const Icon(Icons.library_add),
+                                          label: const Text('Add songs'),
+                                        ),
+                                      ],
                                     ),
-                                    onPressed: () => _addSongs(
-                                      context,
-                                      ref,
-                                      selectedPlaylistId,
-                                      name,
-                                    ),
-                                    icon: const Icon(Icons.library_add),
-                                    label: const Text('Add songs'),
-                                  ),
-                                ],
+                                  );
+                                }
+                                return _playlistTracks(
+                                  context,
+                                  ref,
+                                  selectedPlaylistId,
+                                  name,
+                                  tracks,
+                                );
+                              },
+                              loading: () => Center(
+                                child: CircularProgressIndicator(
+                                  color: colors.accent,
+                                ),
+                              ),
+                              error: (err, stack) => RetryMessage(
+                                onRetry: () => ref.invalidate(
+                                  playlistTracksProvider(selectedPlaylistId),
+                                ),
                               ),
                             );
-                          }
-                          return _playlistTracks(
-                            context,
-                            ref,
-                            selectedPlaylistId,
-                            name,
-                            tracks,
-                          );
-                        },
-                        loading: () => Center(
-                          child: CircularProgressIndicator(
-                            color: colors.accent,
-                          ),
+                          },
                         ),
-                        error: (err, stack) => RetryMessage(
-                          onRetry: () => ref.invalidate(
-                            playlistTracksProvider(selectedPlaylistId),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
+                ),
+            ],
+          );
+        },
       ),
     );
   }

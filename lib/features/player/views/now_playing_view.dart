@@ -212,7 +212,8 @@ class PlaybackControls extends ConsumerWidget {
           initialData: player.state.playing,
           builder: (_, snapshot) => IconButton.filled(
             tooltip: snapshot.data == true ? 'Pause' : 'Play',
-            onPressed: () => player.playOrPause(),
+            onPressed: () =>
+                ref.read(playbackControllerProvider).togglePlayback(),
             icon: Icon(snapshot.data == true ? Icons.pause : Icons.play_arrow),
           ),
         ),

@@ -1,10 +1,12 @@
 import 'package:electrowave/features/settings/views/equalizer_dialog.dart';
+import 'package:electrowave/features/settings/views/settings_view.dart';
 import 'package:electrowave/shared/services/window_state_service.dart';
 import 'package:electrowave/features/library/services/tag_writer.dart';
 import 'package:electrowave/features/player/providers/session_provider.dart';
 import 'package:electrowave/core/session/session_store.dart';
 import 'package:electrowave/features/library/services/loudness_scanner.dart';
 import 'dart:ui' as ui;
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -244,6 +246,28 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       expect(tester.takeException(), null);
       await tester.runAsync(() => capture('settings-large-text.png'));
+      // Exercise the supported minimum window, including the queue restored
+      // from a previous session, rather than only a wide desktop canvas.
+      await container.read(settingsControllerProvider.notifier).setTextScale(1);
+      container.read(navIndexProvider.notifier).set(0);
+      tester.view.physicalSize = const Size(720, 520);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.runAsync(() => capture('library-minimum.png'));
+      expect(tester.takeException(), null);
+      container.read(queuePanelVisibleProvider.notifier).set(true);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.runAsync(() => capture('library-minimum-queue.png'));
+      expect(tester.takeException(), null);
+      container.read(queuePanelVisibleProvider.notifier).set(false);
+      await tester.pump();
+      await tester.tap(find.byTooltip('Player options'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Now playing'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.settings).first);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(SettingsView), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));
       messenger.setMockMethodCallHandler(
@@ -307,6 +331,10 @@ void main() {
         tracks.first.filePath,
         '-codec:a',
         'libmp3lame',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
         mp3,
       ]);
       expect(result.exitCode, 0, reason: '${result.stderr}');
@@ -331,6 +359,32 @@ void main() {
       await player.open(Media(mp3));
       await until(() => player.state.position.inMilliseconds > 300);
       expect(player.state.duration.inMilliseconds, greaterThan(2500));
+      // Start with a legacy saved EQ enabled, the case missed by the old
+      // test that merely read the uninitialized graph back from mpv.
+      final engine = container.read(audioEngineProvider);
+      await engine.applyAudioSettings(
+        AppSettings.fromJson({
+          'eqEnabled': true,
+          'eqGainsDb': [6, 2, -2, 2, 5],
+        }),
+      );
+      final errors = <String>[];
+      final sub = player.stream.error.listen(errors.add);
+      await player.open(Media(mp3));
+      await until(() => player.state.position.inMilliseconds > 1200);
+      expect(player.state.playlist.medias.single.uri, Media(mp3).uri);
+      expect(player.state.audioParams.sampleRate, greaterThan(0));
+      expect(errors, isEmpty);
+      for (final preset in kEqPresets.values) {
+        await engine.applyAudioSettings(
+          AppSettings(eqEnabled: true, eqGainsDb: preset),
+        );
+        await player.open(Media(mp3));
+        await until(() => player.state.position.inMilliseconds > 400);
+        expect(player.state.audioParams.sampleRate, greaterThan(0));
+        expect(errors, isEmpty);
+      }
+      await sub.cancel();
     },
   );
 
@@ -371,6 +425,92 @@ void main() {
     },
   );
   test(
+    'Play at the end restarts the displayed song after gapless transitions',
+    () async {
+      final controller = container.read(playbackControllerProvider);
+      controller.playFromContext(tracks, 0);
+      await until(() => player.state.position.inMilliseconds > 200);
+      for (var i = 1; i < tracks.length; i++) {
+        await player.seek(const Duration(milliseconds: 5500));
+        await until(
+          () => container.read(currentTrackProvider)?.id == tracks[i].id,
+        );
+        await until(
+          () =>
+              player.state.position.inMilliseconds > 200 &&
+              player.state.position.inMilliseconds < 2000,
+        );
+      }
+      await player.seek(const Duration(milliseconds: 5500));
+      await until(() => player.state.completed);
+      await controller.togglePlayback();
+      await until(
+        () =>
+            player.state.position.inMilliseconds > 300 &&
+            player.state.position.inMilliseconds < 2000,
+      );
+      expect(container.read(currentTrackProvider)?.id, tracks.last.id);
+      expect(
+        player.state.playlist.medias[player.state.playlist.index].uri,
+        Media(tracks.last.filePath).uri,
+      );
+      expect(player.state.playing, true);
+    },
+  );
+  test('real MP3 with saved EQ keeps playing instead of skipping', () async {
+    final sample = Platform.environment['ELECTROWAVE_AUDIO_SAMPLE'];
+    if (sample == null) return;
+    final settingsPath = Platform.environment['ELECTROWAVE_SETTINGS_SAMPLE'];
+    final settings = settingsPath == null
+        ? const AppSettings()
+        : AppSettings.fromJson(
+            jsonDecode(await File(settingsPath).readAsString()),
+          );
+    await container.read(audioEngineProvider).applyAudioSettings(settings);
+    final actual = tracks.first.copyWith(filePath: sample, durationMs: 180000);
+    final errors = <String>[];
+    final subscription = player.stream.error.listen(errors.add);
+    container.read(playbackControllerProvider).playFromContext([
+      actual,
+      ...tracks.skip(1),
+    ], 0);
+    try {
+      await until(() => player.state.position.inMilliseconds > 2500);
+    } finally {
+      await subscription.cancel();
+    }
+    expect(container.read(currentTrackProvider)?.id, actual.id);
+    expect(player.state.playing, true);
+    expect(
+      player.state.playlist.medias[player.state.playlist.index].uri,
+      Media(sample).uri,
+    );
+    expect(errors, isEmpty);
+  }, skip: Platform.environment['ELECTROWAVE_AUDIO_SAMPLE'] == null);
+  test(
+    'rapid opens and preloading always settle on the final requested track',
+    () async {
+      final controller = container.read(playbackControllerProvider);
+      for (var turn = 0; turn < 6; turn++) {
+        final finalIndex = turn % tracks.length;
+        controller.playFromContext(tracks, (finalIndex + 1) % tracks.length);
+        container
+            .read(queueProvider.notifier)
+            .playNext(tracks[(finalIndex + 2) % tracks.length]);
+        controller.playFromContext(tracks, finalIndex);
+        await until(
+          () =>
+              player.state.position.inMilliseconds > 200 &&
+              player.state.playlist.medias[player.state.playlist.index].uri ==
+                  Media(tracks[finalIndex].filePath).uri,
+        );
+        expect(container.read(currentTrackProvider)?.id, tracks[finalIndex].id);
+        expect(container.read(queueProvider).contextIndex, finalIndex);
+        await player.pause();
+      }
+    },
+  );
+  test(
     'ten-band EQ with preamp and speed is accepted by mpv and audio advances',
     () async {
       final controller = container.read(playbackControllerProvider);
@@ -388,7 +528,11 @@ void main() {
       final native = player.platform as NativePlayer;
       final chain = await native.getProperty('af');
       expect(chain, contains('equalizer'));
-      expect(chain, contains('volume'));
+      expect(chain, isNot(contains('volume=')));
+      final gain =
+          double.tryParse(await native.getProperty('volume-gain')) ??
+          double.parse(await native.getProperty('replaygain-fallback'));
+      expect(gain, closeTo(-7, 0.01));
       expect(chain, contains('scaletempo2'));
       final position = player.state.position;
       await until(
@@ -397,6 +541,7 @@ void main() {
             position + const Duration(milliseconds: 300),
       );
       expect(player.state.rate, 1.25);
+      expect(container.read(currentTrackProvider)?.id, tracks.first.id);
       await native.setProperty('audio-exclusive', 'no');
       await native.setProperty('audio-device', 'auto');
     },

@@ -44,6 +44,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   AppLifecycleListener? _lifecycleListener;
   late final WindowStateService _window;
   bool _mini = false, _nowPlaying = false, _dragging = false;
+  bool _changingMini = false;
 
   final List<Widget> _screens = [
     const LibraryView(),
@@ -168,10 +169,16 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
   }
 
   Future<void> _toggleMini() async {
-    final next = !_mini;
-    if (next && mounted) setState(() => _mini = true);
-    await _window.setMini(next);
-    if (mounted) setState(() => _mini = next);
+    if (_changingMini) return;
+    _changingMini = true;
+    try {
+      final next = !_mini;
+      if (next && mounted) setState(() => _mini = true);
+      await _window.setMini(next);
+      if (mounted) setState(() => _mini = next);
+    } finally {
+      _changingMini = false;
+    }
   }
 
   void _shortcuts() {
@@ -241,7 +248,6 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
 
   @override
   void onTrayMenuItemClick(MenuItem menuItem) async {
-    final player = ref.read(playerProvider);
     final playbackController = ref.read(playbackControllerProvider);
     // A tray control is the user being present: push back the auto-stop.
     ref.read(audioEngineProvider).noteUserActivity();
@@ -251,7 +257,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
         await windowManager.show();
         await windowManager.focus();
       case 'play_pause':
-        player.state.playing ? player.pause() : player.play();
+        playbackController.togglePlayback();
       case 'previous':
         playbackController.playPreviousTrack();
       case 'next':
@@ -274,6 +280,11 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
 
   bool _handleHardwareKeys(KeyEvent event) {
     if (event is KeyDownEvent) {
+      final mediaKey =
+          event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
+          event.logicalKey == LogicalKeyboardKey.mediaTrackNext ||
+          event.logicalKey == LogicalKeyboardKey.mediaTrackPrevious;
+      if (!mediaKey && ModalRoute.of(context)?.isCurrent == false) return false;
       final player = ref.read(playerProvider);
       final playbackController = ref.read(playbackControllerProvider);
       final ctrl = HardwareKeyboard.instance.isControlPressed;
@@ -332,7 +343,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
         }
       }
       if (event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
-        player.state.playing ? player.pause() : player.play();
+        playbackController.togglePlayback();
         return true;
       } else if (event.logicalKey == LogicalKeyboardKey.mediaTrackNext) {
         playbackController.playNextTrack();
@@ -342,7 +353,7 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
         return true;
       } else if (event.logicalKey == LogicalKeyboardKey.space &&
           !_isTypingInTextField()) {
-        player.state.playing ? player.pause() : player.play();
+        playbackController.togglePlayback();
         return true;
       } else if (ctrl &&
           event.logicalKey == LogicalKeyboardKey.arrowRight &&
@@ -396,87 +407,155 @@ class _MainShellState extends ConsumerState<MainShell> with TrayListener {
               body: Column(
                 children: [
                   Expanded(
-                    child: Row(
-                      children: [
-                        NavigationRail(
-                          selectedIndex: selectedIndex,
-                          onDestinationSelected: (index) =>
-                              ref.read(navIndexProvider.notifier).set(index),
-                          backgroundColor: colors.surface,
-                          labelType: NavigationRailLabelType.all,
-                          selectedIconTheme: IconThemeData(
-                            color: colors.accent,
-                          ),
-                          unselectedIconTheme: IconThemeData(
-                            color: colors.textFaint,
-                          ),
-                          selectedLabelTextStyle: Theme.of(context)
-                              .textTheme
-                              .labelMedium!
-                              .copyWith(color: colors.accent),
-                          unselectedLabelTextStyle: Theme.of(context)
-                              .textTheme
-                              .labelMedium!
-                              .copyWith(color: colors.textFaint),
-                          scrollable: true,
-                          trailingAtBottom: true,
-                          trailing: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              IconButton(
-                                tooltip: 'Now playing',
-                                isSelected: _nowPlaying,
-                                onPressed: () =>
-                                    setState(() => _nowPlaying = !_nowPlaying),
-                                icon: const Icon(Icons.album_outlined),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final dockQueue = constraints.maxWidth >= 1150;
+                        final compactRail = constraints.maxHeight < 480;
+                        return Stack(
+                          children: [
+                            Row(
+                              children: [
+                                NavigationRail(
+                                  selectedIndex: selectedIndex,
+                                  onDestinationSelected: (index) {
+                                    setState(() => _nowPlaying = false);
+                                    ref
+                                        .read(navIndexProvider.notifier)
+                                        .set(index);
+                                  },
+                                  backgroundColor: colors.surface,
+                                  labelType: compactRail
+                                      ? NavigationRailLabelType.none
+                                      : NavigationRailLabelType.all,
+                                  selectedIconTheme: IconThemeData(
+                                    color: colors.accent,
+                                  ),
+                                  unselectedIconTheme: IconThemeData(
+                                    color: colors.textFaint,
+                                  ),
+                                  selectedLabelTextStyle: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium!
+                                      .copyWith(color: colors.accent),
+                                  unselectedLabelTextStyle: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium!
+                                      .copyWith(color: colors.textFaint),
+                                  scrollable: true,
+                                  trailingAtBottom: true,
+                                  trailing: compactRail
+                                      ? PopupMenuButton<String>(
+                                          tooltip: 'Player options',
+                                          icon: const Icon(Icons.more_horiz),
+                                          itemBuilder: (_) => const [
+                                            PopupMenuItem(
+                                              value: 'now',
+                                              child: Text('Now playing'),
+                                            ),
+                                            PopupMenuItem(
+                                              value: 'mini',
+                                              child: Text('Mini player'),
+                                            ),
+                                            PopupMenuItem(
+                                              value: 'help',
+                                              child: Text('Keyboard shortcuts'),
+                                            ),
+                                          ],
+                                          onSelected: (value) {
+                                            switch (value) {
+                                              case 'now':
+                                                setState(
+                                                  () => _nowPlaying =
+                                                      !_nowPlaying,
+                                                );
+                                              case 'mini':
+                                                _toggleMini();
+                                              case 'help':
+                                                _shortcuts();
+                                            }
+                                          },
+                                        )
+                                      : Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Now playing',
+                                              isSelected: _nowPlaying,
+                                              onPressed: () => setState(
+                                                () =>
+                                                    _nowPlaying = !_nowPlaying,
+                                              ),
+                                              icon: const Icon(
+                                                Icons.album_outlined,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Mini player',
+                                              onPressed: _toggleMini,
+                                              icon: const Icon(
+                                                Icons.picture_in_picture_alt,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Keyboard shortcuts',
+                                              onPressed: _shortcuts,
+                                              icon: const Icon(Icons.keyboard),
+                                            ),
+                                            const SizedBox(height: 8),
+                                          ],
+                                        ),
+                                  destinations: const [
+                                    NavigationRailDestination(
+                                      icon: Icon(Icons.library_music),
+                                      label: Text('Library'),
+                                    ),
+                                    NavigationRailDestination(
+                                      icon: Icon(Icons.featured_play_list),
+                                      label: Text('Playlists'),
+                                    ),
+                                    NavigationRailDestination(
+                                      icon: Icon(Icons.bar_chart),
+                                      label: Text('Stats'),
+                                    ),
+                                    NavigationRailDestination(
+                                      icon: Icon(Icons.settings),
+                                      label: Text('Settings'),
+                                    ),
+                                  ],
+                                ),
+
+                                Expanded(
+                                  child: _nowPlaying
+                                      ? NowPlayingView(
+                                          onClose: () => setState(
+                                            () => _nowPlaying = false,
+                                          ),
+                                        )
+                                      : _screens[selectedIndex],
+                                ),
+
+                                // Spotify-style queue side panel
+                                if (dockQueue &&
+                                    ref.watch(queuePanelVisibleProvider))
+                                  const QueuePanel(),
+                              ],
+                            ),
+                            if (!dockQueue &&
+                                ref.watch(queuePanelVisibleProvider))
+                              const Positioned(
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: Material(
+                                  elevation: 12,
+                                  child: QueuePanel(),
+                                ),
                               ),
-                              IconButton(
-                                tooltip: 'Mini player',
-                                onPressed: _toggleMini,
-                                icon: const Icon(Icons.picture_in_picture_alt),
-                              ),
-                              IconButton(
-                                tooltip: 'Keyboard shortcuts',
-                                onPressed: _shortcuts,
-                                icon: const Icon(Icons.keyboard),
-                              ),
-                              const SizedBox(height: 8),
-                            ],
-                          ),
-                          destinations: const [
-                            NavigationRailDestination(
-                              icon: Icon(Icons.library_music),
-                              label: Text('Library'),
-                            ),
-                            NavigationRailDestination(
-                              icon: Icon(Icons.featured_play_list),
-                              label: Text('Playlists'),
-                            ),
-                            NavigationRailDestination(
-                              icon: Icon(Icons.bar_chart),
-                              label: Text('Stats'),
-                            ),
-                            NavigationRailDestination(
-                              icon: Icon(Icons.settings),
-                              label: Text('Settings'),
-                            ),
                           ],
-                        ),
-
-                        Expanded(
-                          child: _nowPlaying
-                              ? NowPlayingView(
-                                  onClose: () =>
-                                      setState(() => _nowPlaying = false),
-                                )
-                              : _screens[selectedIndex],
-                        ),
-
-                        // Spotify-style queue side panel
-                        if (ref.watch(queuePanelVisibleProvider))
-                          const QueuePanel(),
-                      ],
+                        );
+                      },
                     ),
                   ),
 

@@ -53,23 +53,24 @@ class BottomPlayerBar extends ConsumerWidget {
             ],
           ),
         ),
-        if (track != null)
-          IconButton(
-            tooltip: track.isFavorite ? 'Remove favorite' : 'Favorite',
-            icon: Icon(
-              track.isFavorite ? Icons.favorite : Icons.favorite_border,
-              size: 20,
-            ),
-            color: track.isFavorite ? colors.accent : colors.textFaint,
-            onPressed: () => ref
-                .read(databaseProvider)
-                .setFavorite(track.id, !track.isFavorite),
-          ),
       ],
     );
     final controls = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        IconButton(
+          tooltip: track?.isFavorite == true ? 'Remove favorite' : 'Favorite',
+          icon: Icon(
+            track?.isFavorite == true ? Icons.favorite : Icons.favorite_border,
+            size: 20,
+          ),
+          color: track?.isFavorite == true ? colors.accent : colors.textFaint,
+          onPressed: track == null
+              ? null
+              : () => ref
+                    .read(databaseProvider)
+                    .setFavorite(track.id, !track.isFavorite),
+        ),
         IconButton(
           tooltip: 'Shuffle',
           isSelected: ref.watch(shuffleProvider),
@@ -86,7 +87,7 @@ class BottomPlayerBar extends ConsumerWidget {
           initialData: player.state.playing,
           builder: (_, s) => IconButton.filled(
             tooltip: s.data == true ? 'Pause' : 'Play',
-            onPressed: () => player.playOrPause(),
+            onPressed: controller.togglePlayback,
             icon: Icon(s.data == true ? Icons.pause : Icons.play_arrow),
           ),
         ),
@@ -228,20 +229,24 @@ class BottomPlayerBar extends ConsumerWidget {
                   children: [
                     Expanded(child: info),
                     actions,
+                    volume,
                   ],
                 ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: [controls, const SizedBox(width: 16), volume],
+                  children: [controls],
                 ),
               ] else
                 Row(
                   children: [
                     Expanded(child: info),
                     controls,
-                    const SizedBox(width: 12),
-                    actions,
-                    volume,
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [actions, volume],
+                      ),
+                    ),
                   ],
                 ),
             ],

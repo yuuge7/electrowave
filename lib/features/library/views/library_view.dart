@@ -15,6 +15,15 @@ final searchFocusProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
+final librarySearchControllerProvider = Provider<TextEditingController>((ref) {
+  final controller = TextEditingController(text: ref.read(searchQueryProvider));
+  ref.listen(searchQueryProvider, (_, query) {
+    if (controller.text != query) controller.text = query;
+  });
+  ref.onDispose(controller.dispose);
+  return controller;
+});
+
 class LibraryView extends ConsumerWidget {
   const LibraryView({super.key});
 
@@ -70,12 +79,21 @@ class LibraryView extends ConsumerWidget {
   Widget _searchField(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     return TextField(
+      controller: ref.watch(librarySearchControllerProvider),
       focusNode: ref.watch(searchFocusProvider),
       style: TextStyle(color: colors.textPrimary),
       decoration: InputDecoration(
         hintText: 'Search songs, artists, or albums...',
         hintStyle: TextStyle(color: colors.textFaint),
         prefixIcon: Icon(Icons.search, color: colors.textFaint),
+        suffixIcon: ref.watch(searchQueryProvider).isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(Icons.close),
+                onPressed: () =>
+                    ref.read(searchQueryProvider.notifier).updateQuery(''),
+              ),
         filled: true,
         fillColor: colors.surface,
         border: OutlineInputBorder(
@@ -99,53 +117,84 @@ class LibraryView extends ConsumerWidget {
     final mode = ref.watch(libraryBrowseModeProvider);
     final sort = ref.watch(librarySortProvider);
     final smartList = ref.watch(selectedSmartListProvider);
+    final compact =
+        MediaQuery.sizeOf(context).width < 1050 ||
+        MediaQuery.textScalerOf(context).scale(1) > 1.2;
+
+    void setMode(LibraryBrowseMode value) {
+      ref.read(browseDetailProvider.notifier).close();
+      ref.read(selectedSmartListProvider.notifier).select(null);
+      ref.read(libraryBrowseModeProvider.notifier).set(value);
+    }
 
     return Wrap(
       spacing: 12,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        SegmentedButton<LibraryBrowseMode>(
-          segments: const [
-            ButtonSegment(
-              value: LibraryBrowseMode.tracks,
-              icon: Icon(Icons.music_note),
-              label: Text('Tracks'),
-            ),
-            ButtonSegment(
-              value: LibraryBrowseMode.albums,
-              icon: Icon(Icons.album),
-              label: Text('Albums'),
-            ),
-            ButtonSegment(
-              value: LibraryBrowseMode.artists,
-              icon: Icon(Icons.person),
-              label: Text('Artists'),
-            ),
-            ButtonSegment(
-              value: LibraryBrowseMode.folders,
-              icon: Icon(Icons.folder),
-              label: Text('Folders'),
-            ),
-            ButtonSegment(
-              value: LibraryBrowseMode.genres,
-              icon: Icon(Icons.category),
-              label: Text('Genres'),
-            ),
-            ButtonSegment(
-              value: LibraryBrowseMode.years,
-              icon: Icon(Icons.calendar_today),
-              label: Text('Years'),
-            ),
-          ],
-          selected: {mode},
-          showSelectedIcon: false,
-          onSelectionChanged: (selection) {
-            ref.read(browseDetailProvider.notifier).close();
-            ref.read(selectedSmartListProvider.notifier).select(null);
-            ref.read(libraryBrowseModeProvider.notifier).set(selection.first);
-          },
-        ),
+        if (compact)
+          DropdownButton<LibraryBrowseMode>(
+            value: mode,
+            borderRadius: BorderRadius.circular(8),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            items: [
+              for (final value in LibraryBrowseMode.values)
+                DropdownMenuItem(
+                  value: value,
+                  child: Text(switch (value) {
+                    LibraryBrowseMode.tracks => 'Tracks',
+                    LibraryBrowseMode.albums => 'Albums',
+                    LibraryBrowseMode.artists => 'Artists',
+                    LibraryBrowseMode.folders => 'Folders',
+                    LibraryBrowseMode.genres => 'Genres',
+                    LibraryBrowseMode.years => 'Years',
+                  }),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) setMode(value);
+            },
+          )
+        else
+          SegmentedButton<LibraryBrowseMode>(
+            segments: const [
+              ButtonSegment(
+                value: LibraryBrowseMode.tracks,
+                icon: Icon(Icons.music_note),
+                label: Text('Tracks'),
+              ),
+              ButtonSegment(
+                value: LibraryBrowseMode.albums,
+                icon: Icon(Icons.album),
+                label: Text('Albums'),
+              ),
+              ButtonSegment(
+                value: LibraryBrowseMode.artists,
+                icon: Icon(Icons.person),
+                label: Text('Artists'),
+              ),
+              ButtonSegment(
+                value: LibraryBrowseMode.folders,
+                icon: Icon(Icons.folder),
+                label: Text('Folders'),
+              ),
+              ButtonSegment(
+                value: LibraryBrowseMode.genres,
+                icon: Icon(Icons.category),
+                label: Text('Genres'),
+              ),
+              ButtonSegment(
+                value: LibraryBrowseMode.years,
+                icon: Icon(Icons.calendar_today),
+                label: Text('Years'),
+              ),
+            ],
+            selected: {mode},
+            showSelectedIcon: false,
+            onSelectionChanged: (selection) {
+              setMode(selection.first);
+            },
+          ),
         if (mode == LibraryBrowseMode.tracks && smartList == null)
           PopupMenuButton<db.LibrarySort>(
             tooltip: 'Sort',
@@ -194,34 +243,58 @@ class LibraryView extends ConsumerWidget {
               ),
             ),
           ),
-        for (final list in SmartList.values)
-          FilterChip(
-            label: Text(smartListLabel(list)),
-            selected: smartList == list,
-            showCheckmark: false,
-            avatar: Icon(
-              switch (list) {
-                SmartList.favorites => Icons.favorite,
-                SmartList.recentlyAdded => Icons.new_releases_outlined,
-                SmartList.recentlyPlayed => Icons.history,
-                SmartList.mostPlayed => Icons.local_fire_department_outlined,
-              },
-              size: 16,
-              color: smartList == list ? colors.onAccent : colors.textFaint,
-            ),
-            selectedColor: colors.accent,
-            backgroundColor: colors.surface,
-            labelStyle: TextStyle(
-              color: smartList == list ? colors.onAccent : colors.textSecondary,
-            ),
-            side: BorderSide(color: colors.border),
-            onSelected: (selected) {
+        if (compact)
+          DropdownButton<SmartList>(
+            value: smartList,
+            hint: const Text('All tracks'),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            items: [
+              const DropdownMenuItem<SmartList>(child: Text('All tracks')),
+              for (final list in SmartList.values)
+                DropdownMenuItem(
+                  value: list,
+                  child: Text(smartListLabel(list)),
+                ),
+            ],
+            onChanged: (value) {
               ref.read(browseDetailProvider.notifier).close();
+              ref.read(selectedSmartListProvider.notifier).select(value);
               ref
-                  .read(selectedSmartListProvider.notifier)
-                  .select(selected ? list : null);
+                  .read(libraryBrowseModeProvider.notifier)
+                  .set(LibraryBrowseMode.tracks);
             },
-          ),
+          )
+        else
+          for (final list in SmartList.values)
+            FilterChip(
+              label: Text(smartListLabel(list)),
+              selected: smartList == list,
+              showCheckmark: false,
+              avatar: Icon(
+                switch (list) {
+                  SmartList.favorites => Icons.favorite,
+                  SmartList.recentlyAdded => Icons.new_releases_outlined,
+                  SmartList.recentlyPlayed => Icons.history,
+                  SmartList.mostPlayed => Icons.local_fire_department_outlined,
+                },
+                size: 16,
+                color: smartList == list ? colors.onAccent : colors.textFaint,
+              ),
+              selectedColor: colors.accent,
+              backgroundColor: colors.surface,
+              labelStyle: TextStyle(
+                color: smartList == list
+                    ? colors.onAccent
+                    : colors.textSecondary,
+              ),
+              side: BorderSide(color: colors.border),
+              onSelected: (selected) {
+                ref.read(browseDetailProvider.notifier).close();
+                ref
+                    .read(selectedSmartListProvider.notifier)
+                    .select(selected ? list : null);
+              },
+            ),
       ],
     );
   }

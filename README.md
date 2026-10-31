@@ -91,6 +91,19 @@ flutter test test_native/audio_smoke_test.dart
 
 These tests use generated audio and isolated temporary libraries. They cover native preloading/queue transitions, EQ and speed, crossfade, ffmpeg loudness measurement, and rendered desktop layouts including enlarged text. Rendered PNGs go to `build/verification`.
 
+Run the desktop integration test to launch a visible app with real window, audio,
+settings and session services (no platform mocks):
+
+```powershell
+flutter test integration_test/desktop_app_test.dart -d windows
+```
+
+It uses an isolated temporary library. Optional environment variables
+`ELECTROWAVE_REPRO_DATABASE` (a database snapshot) and
+`ELECTROWAVE_SETTINGS_SAMPLE` let it reproduce an existing library and settings;
+`ELECTROWAVE_QA_OUTPUT` chooses where screenshots are saved. Existing music files
+are played and read, while library changes stay in the temporary copy.
+
 `build_desktop.yml` and `releases.yml` retain the existing desktop build/publishing structure. Both run analysis and unit/widget tests before building. Releases additionally build and verify the Windows MSI. No workflow is triggered or release published by a local build.
 
 The repo intentionally omits Android, iOS and web application scaffolding. `web/music.png` remains because desktop icons and packaging use it. macOS runner sources are retained but are not part of the release matrix.

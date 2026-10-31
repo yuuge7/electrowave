@@ -2,7 +2,7 @@ name: electrowave
 description: "An offline desktop music library and player for Windows and Linux."
 publish_to: 'none'
 
-version: 1.0.5+5
+version: 1.0.6+6
 
 environment:
   sdk: ^3.12.2
@@ -33,6 +33,8 @@ dependencies:
   watcher: ^1.2.1
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 

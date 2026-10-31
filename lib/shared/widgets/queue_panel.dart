@@ -104,140 +104,148 @@ class QueuePanel extends ConsumerWidget {
         color: colors.surface,
         border: Border(left: BorderSide(color: colors.border)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Queue',
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close',
-                  icon: Icon(Icons.close, color: colors.textFaint, size: 20),
-                  onPressed: () =>
-                      ref.read(queuePanelVisibleProvider.notifier).close(),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              children: [
-                if (currentTrack != null) ...[
-                  _sectionHeader('Now playing', colors),
-                  _trackTile(currentTrack, colors, highlighted: true),
-                ],
-                if (queue.manualQueue.isNotEmpty) ...[
-                  _sectionHeader(
-                    'Next in queue',
-                    colors,
-                    trailing: TextButton(
-                      onPressed: () {
-                        final before = ref.read(queueProvider);
-                        ref.read(queueProvider.notifier).clearQueue();
-                        showUndo(context, 'Queue cleared.', () async {
-                          final current = ref.read(queueProvider);
-                          ref
-                              .read(queueProvider.notifier)
-                              .replace(
-                                current.copyWith(
-                                  manualQueue: [
-                                    ...before.manualQueue,
-                                    ...current.manualQueue,
-                                  ],
-                                ),
-                              );
-                        });
-                      },
-                      child: Text(
-                        'Clear',
-                        style: TextStyle(color: colors.textFaint, fontSize: 12),
+      child: Material(
+        color: colors.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Queue',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
                       ),
                     ),
                   ),
-                  // Drag to reorder what plays next.
-                  ReorderableListView(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    buildDefaultDragHandles: false,
-                    // onReorderItem hands over the index already adjusted for
-                    // the removed item, which is what reorderQueue expects.
-                    onReorderItem: (oldIndex, newIndex) => ref
-                        .read(queueProvider.notifier)
-                        .reorderQueue(oldIndex, newIndex),
-                    children: [
-                      for (final entry in queue.manualQueue.asMap().entries)
-                        ReorderableDragStartListener(
-                          key: ValueKey('queue-${entry.key}-${entry.value.id}'),
-                          index: entry.key,
-                          child: _trackTile(
-                            entry.value,
-                            colors,
-                            onTap: () =>
-                                controller.playQueuedTrackNow(entry.value),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.drag_handle,
-                                  color: colors.textFaint,
-                                  size: 16,
-                                ),
-                                IconButton(
-                                  tooltip: 'Remove from queue',
-                                  icon: Icon(
-                                    Icons.close,
+                  IconButton(
+                    tooltip: 'Close',
+                    icon: Icon(Icons.close, color: colors.textFaint, size: 20),
+                    onPressed: () =>
+                        ref.read(queuePanelVisibleProvider.notifier).close(),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                children: [
+                  if (currentTrack != null) ...[
+                    _sectionHeader('Now playing', colors),
+                    _trackTile(currentTrack, colors, highlighted: true),
+                  ],
+                  if (queue.manualQueue.isNotEmpty) ...[
+                    _sectionHeader(
+                      'Next in queue',
+                      colors,
+                      trailing: TextButton(
+                        onPressed: () {
+                          final before = ref.read(queueProvider);
+                          ref.read(queueProvider.notifier).clearQueue();
+                          showUndo(context, 'Queue cleared.', () async {
+                            final current = ref.read(queueProvider);
+                            ref
+                                .read(queueProvider.notifier)
+                                .replace(
+                                  current.copyWith(
+                                    manualQueue: [
+                                      ...before.manualQueue,
+                                      ...current.manualQueue,
+                                    ],
+                                  ),
+                                );
+                          });
+                        },
+                        child: Text(
+                          'Clear',
+                          style: TextStyle(
+                            color: colors.textFaint,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Drag to reorder what plays next.
+                    ReorderableListView(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      buildDefaultDragHandles: false,
+                      // onReorderItem hands over the index already adjusted for
+                      // the removed item, which is what reorderQueue expects.
+                      onReorderItem: (oldIndex, newIndex) => ref
+                          .read(queueProvider.notifier)
+                          .reorderQueue(oldIndex, newIndex),
+                      children: [
+                        for (final entry in queue.manualQueue.asMap().entries)
+                          ReorderableDragStartListener(
+                            key: ValueKey(
+                              'queue-${entry.key}-${entry.value.id}',
+                            ),
+                            index: entry.key,
+                            child: _trackTile(
+                              entry.value,
+                              colors,
+                              onTap: () =>
+                                  controller.playQueuedTrackNow(entry.value),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.drag_handle,
                                     color: colors.textFaint,
                                     size: 16,
                                   ),
-                                  onPressed: () => ref
-                                      .read(queueProvider.notifier)
-                                      .removeFromQueue(entry.key),
-                                ),
-                              ],
+                                  IconButton(
+                                    tooltip: 'Remove from queue',
+                                    icon: Icon(
+                                      Icons.close,
+                                      color: colors.textFaint,
+                                      size: 16,
+                                    ),
+                                    onPressed: () => ref
+                                        .read(queueProvider.notifier)
+                                        .removeFromQueue(entry.key),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
+                      ],
+                    ),
+                  ],
+                  if (upcoming.isNotEmpty) ...[
+                    _sectionHeader('Next up', colors),
+                    ...upcoming.asMap().entries.map(
+                      (entry) => _trackTile(
+                        entry.value,
+                        colors,
+                        onTap: () => controller.playFromContext(
+                          queue.context,
+                          queue.contextIndex + 1 + entry.key,
                         ),
-                    ],
-                  ),
-                ],
-                if (upcoming.isNotEmpty) ...[
-                  _sectionHeader('Next up', colors),
-                  ...upcoming.asMap().entries.map(
-                    (entry) => _trackTile(
-                      entry.value,
-                      colors,
-                      onTap: () => controller.playFromContext(
-                        queue.context,
-                        queue.contextIndex + 1 + entry.key,
                       ),
                     ),
-                  ),
-                ],
-                if (currentTrack == null &&
-                    queue.manualQueue.isEmpty &&
-                    upcoming.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'Nothing queued.\nPlay a track or right-click one to add it to the queue.',
-                      style: TextStyle(color: colors.textFaint, fontSize: 13),
+                  ],
+                  if (currentTrack == null &&
+                      queue.manualQueue.isEmpty &&
+                      upcoming.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'Nothing queued.\nPlay a track or right-click one to add it to the queue.',
+                        style: TextStyle(color: colors.textFaint, fontSize: 13),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -58,11 +58,11 @@ class SystemMediaService extends DBusObject {
     final player = ref.read(playerProvider);
     switch (command.toLowerCase()) {
       case 'play':
-        await player.play();
+        await ref.read(playbackControllerProvider).play();
       case 'pause':
         await player.pause();
       case 'playpause':
-        await player.playOrPause();
+        await ref.read(playbackControllerProvider).togglePlayback();
       case 'stop':
         await player.pause();
         await player.seek(Duration.zero);

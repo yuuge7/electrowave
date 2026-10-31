@@ -65,7 +65,10 @@ class StatsView extends ConsumerWidget {
           // --- TIME FILTERS ---
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
               children: [
                 SegmentedButton<StatsMode>(
                   segments: const [
@@ -85,7 +88,6 @@ class StatsView extends ConsumerWidget {
                   onSelectionChanged: (selection) =>
                       ref.read(statsModeProvider.notifier).set(selection.first),
                 ),
-                const SizedBox(width: 24),
                 DropdownButton<StatsFilter>(
                   dropdownColor: colors.surfaceAlt,
                   value: state.filter,
@@ -112,7 +114,6 @@ class StatsView extends ConsumerWidget {
                     if (val != null) notifier.setFilter(val);
                   },
                 ),
-                const SizedBox(width: 24),
 
                 if (state.filter == StatsFilter.monthly) ...[
                   DropdownButton<int>(
@@ -130,7 +131,6 @@ class StatsView extends ConsumerWidget {
                       if (val != null) notifier.setMonth(val);
                     },
                   ),
-                  const SizedBox(width: 16),
                 ],
 
                 if (state.filter != StatsFilter.allTime)
@@ -177,56 +177,125 @@ class StatsView extends ConsumerWidget {
                     );
                   }
 
-                  return Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        Row(
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 1000 ||
+                          constraints.maxHeight < 500) {
+                        return ListView(
+                          padding: const EdgeInsets.all(16),
                           children: [
                             _totalCard(
                               context,
                               label: 'Total Time Listened',
                               value: _formatDurationStr(data.totalDurationMs),
                               hint: 'Full length of every track you played',
+                              expand: false,
                             ),
-                            const SizedBox(width: 16),
+                            const SizedBox(height: 16),
                             _totalCard(
                               context,
                               label: 'Time Listened (measured)',
                               value: _formatDurationStr(measuredMs),
                               hint:
                                   'Audio that actually played — skips excluded',
+                              expand: false,
+                            ),
+                            const SizedBox(height: 24),
+                            SizedBox(
+                              height: 360,
+                              child: Row(
+                                children: [
+                                  _buildLeaderboard(
+                                    context,
+                                    'Top Tracks',
+                                    data.topTracks,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            SizedBox(
+                              height: 360,
+                              child: Row(
+                                children: [
+                                  _buildLeaderboard(
+                                    context,
+                                    'Top Artists',
+                                    data.topArtists,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            SizedBox(
+                              height: 360,
+                              child: Row(
+                                children: [
+                                  _buildListeningBoard(
+                                    context,
+                                    ref,
+                                    listeningStatsAsync,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                _totalCard(
+                                  context,
+                                  label: 'Total Time Listened',
+                                  value: _formatDurationStr(
+                                    data.totalDurationMs,
+                                  ),
+                                  hint: 'Full length of every track you played',
+                                ),
+                                const SizedBox(width: 16),
+                                _totalCard(
+                                  context,
+                                  label: 'Time Listened (measured)',
+                                  value: _formatDurationStr(measuredMs),
+                                  hint:
+                                      'Audio that actually played — skips excluded',
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+
+                            Expanded(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildLeaderboard(
+                                    context,
+                                    'Top Tracks',
+                                    data.topTracks,
+                                  ),
+                                  const SizedBox(width: 24),
+                                  _buildLeaderboard(
+                                    context,
+                                    'Top Artists',
+                                    data.topArtists,
+                                  ),
+                                  const SizedBox(width: 24),
+                                  _buildListeningBoard(
+                                    context,
+                                    ref,
+                                    listeningStatsAsync,
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 24),
-
-                        Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildLeaderboard(
-                                context,
-                                'Top Tracks',
-                                data.topTracks,
-                              ),
-                              const SizedBox(width: 24),
-                              _buildLeaderboard(
-                                context,
-                                'Top Artists',
-                                data.topArtists,
-                              ),
-                              const SizedBox(width: 24),
-                              _buildListeningBoard(
-                                context,
-                                ref,
-                                listeningStatsAsync,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   );
                 },
                 loading: () => Center(
@@ -247,41 +316,38 @@ class StatsView extends ConsumerWidget {
     required String label,
     required String value,
     required String hint,
+    bool expand = true,
   }) {
     final colors = context.colors;
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colors.accent.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          children: [
-            Text(
-              label,
-              style: TextStyle(color: colors.textFaint, fontSize: 14),
+    final card = Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.accent.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(label, style: TextStyle(color: colors.textFaint, fontSize: 14)),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 36,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              hint,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: colors.textFaint, fontSize: 11),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            hint,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colors.textFaint, fontSize: 11),
+          ),
+        ],
       ),
     );
+    return expand ? Expanded(child: card) : card;
   }
 
   Widget _boardShell(BuildContext context, String title, Widget child) {
@@ -300,11 +366,9 @@ class StatsView extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(12),
-              ),
+            child: Material(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(12),
               child: child,
             ),
           ),

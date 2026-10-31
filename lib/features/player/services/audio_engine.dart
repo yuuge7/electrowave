@@ -26,6 +26,8 @@ class AudioEngine {
   /// Last settings seen, so the chain can be rebuilt on a speed change without
   /// the settings controller being involved.
   AppSettings? _settings;
+  double? _trackGain;
+  bool? _hasVolumeGain;
 
   /// Remembered so it can be re-applied after every track load — mpv resets
   /// speed when a new file is opened.
@@ -183,6 +185,7 @@ class AudioEngine {
     if (native == null) return;
     if (_appliedChain.isEmpty && _desiredRate == 1.0) return;
     await _applyFilterChain();
+    await _applyGain();
   }
 
   /// Playback speed. The filter chain is rebuilt *before* the speed changes so
@@ -208,6 +211,7 @@ class AudioEngine {
     if (native == null) return;
 
     await _applyFilterChain();
+    await _applyGain();
     try {
       await native.setProperty('audio-device', settings.audioDevice);
       await native.setProperty(
@@ -226,10 +230,31 @@ class AudioEngine {
   }
 
   Future<void> setTrackGain(double? gain) async {
+    _trackGain = gain;
+    await _applyGain();
+  }
+
+  Future<void> _applyGain() async {
     final native = _native;
     if (native == null) return;
     try {
-      await native.setProperty('replaygain-fallback', '${gain ?? 0}');
+      final settings = _settings;
+      final preamp = settings != null && settings.eqEnabled
+          ? settings.eqPreampDb - settings.eqGainsDb.fold<double>(0, max)
+          : 0.0;
+      _hasVolumeGain ??=
+          double.tryParse(await native.getProperty('volume-gain')) != null;
+      // The bundled FFmpeg omits its volume filter. Use mpv's mixer for
+      // headroom, keeping the user's volume slider independent of EQ gain.
+      if (_hasVolumeGain!) {
+        await native.setProperty('volume-gain', '$preamp');
+      }
+      final legacyPreamp = _hasVolumeGain! ? 0.0 : preamp;
+      await native.setProperty('replaygain-preamp', '$legacyPreamp');
+      final gain = settings?.replayGain == ReplayGainMode.off
+          ? 0.0
+          : (_trackGain ?? 0.0);
+      await native.setProperty('replaygain-fallback', '${legacyPreamp + gain}');
     } catch (e) {
       debugPrint('ReplayGain fallback unavailable: $e');
     }
@@ -287,9 +312,6 @@ String buildFilterChain({
 
   if (settings != null && settings.eqEnabled) {
     final bands = <String>[];
-    final peak = settings.eqGainsDb.fold<double>(0, max);
-    final preamp = settings.eqPreampDb - peak;
-    if (preamp < -0.01) bands.add('volume=${preamp.toStringAsFixed(1)}dB');
     for (var i = 0; i < kEqBandFrequencies.length; i++) {
       final gain = i < settings.eqGainsDb.length ? settings.eqGainsDb[i] : 0.0;
       // Skip inaudible bands to keep the graph short.
